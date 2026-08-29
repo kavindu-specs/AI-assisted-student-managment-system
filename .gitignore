@@ -1,0 +1,53 @@
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / frontend build artifacts
+node_modules/
+**/node_modules/
+.npm/
+.pnpm-store/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend builds
+client/**/dist/
+client/**/build/
+client/**/.vite/
+client/**/coverage/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Server uploads and generated data
+server/uploads/
+server/tmp/
+server/logs/
+server/*.log
+
+# Database / local dev
+*.sqlite
+*.sqlite3
+*.db
+
+a
+# Test coverage
+coverage/
+**/coverage/
+
+# Lockfile noise (optional; keep if you want to track dependency versions)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Misc
+*.local
+.cache/
