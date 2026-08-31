@@ -1,3 +1,5 @@
+const os = require('os');
+
 require('dotenv').config();
 
 function required(name, fallback) {
@@ -10,12 +12,20 @@ module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   clientOrigins: [process.env.CLIENT_ADMIN_ORIGIN, process.env.CLIENT_STUDENT_ORIGIN].filter(Boolean),
 
+  // Multi-process serving (see server.js). Disable for local debugging with
+  // a single attached process (CLUSTER_ENABLED=false), or pin a worker count
+  // (defaults to one worker per CPU core).
+  clusterEnabled: required('CLUSTER_ENABLED', 'true') !== 'false',
+  clusterWorkers: Number(process.env.CLUSTER_WORKERS) || os.cpus().length,
+
   db: {
     host: required('DB_HOST', '127.0.0.1'),
     port: Number(process.env.DB_PORT) || 3306,
     name: required('DB_NAME', 'rajarata_sms'),
     user: required('DB_USER', 'root'),
     password: required('DB_PASSWORD', ''),
+    // Per-worker pool cap - see the comment in config/db.js.
+    poolMax: Number(process.env.DB_POOL_MAX) || 5,
   },
 
   jwt: {

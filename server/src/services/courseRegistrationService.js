@@ -1,42 +1,30 @@
 const {
-  Student, Course, ProgrammeCourse, CourseRegistration, CourseRegistrationItem, Semester,
-  StudentSemesterRegistration, sequelize,
+  Student, Course, CourseRegistration, CourseRegistrationItem, Semester, sequelize,
 } = require('../models');
 const AppError = require('../utils/AppError');
+const auditService = require('./auditService');
 const {
-  MIN_REGISTRATION_CREDITS, MAX_REGISTRATION_CREDITS, COURSE_REGISTRATION_STATUS,
-  SEMESTER_REGISTRATION_STATUS,
+  MIN_REGISTRATION_CREDITS, MAX_REGISTRATION_CREDITS, COURSE_REGISTRATION_STATUS, STUDENT_CURRENT_STATUS,
 } = require('../config/constants');
 
-async function getAvailableCourses(studentId, semesterId) {
+async function assertEligible(studentId, semesterId) {
   const student = await Student.findByPk(studentId);
   if (!student) throw new AppError('Student not found', 404);
+  if (student.current_status !== STUDENT_CURRENT_STATUS.REGISTERED) {
+    throw new AppError('Only registered students can register for courses', 403);
+  }
 
   const semester = await Semester.findByPk(semesterId);
   if (!semester) throw new AppError('Semester not found', 404);
 
-  const semesterRegistration = await StudentSemesterRegistration.findOne({
-    where: { student_id: studentId, semester_id: semesterId },
-  });
-  if (!semesterRegistration || semesterRegistration.registration_status !== SEMESTER_REGISTRATION_STATUS.REGISTERED) {
-    throw new AppError('Student is not activated for this semester yet', 403);
-  }
+  return { student, semester };
+}
 
-  const offerings = await ProgrammeCourse.findAll({
-    where: {
-      programme_id: student.programme_id,
-      semester_no: semester.semester_no,
-      recommended_year: semesterRegistration.study_year,
-    },
-    include: [Course],
-  });
-
-  return offerings.map((o) => ({
-    course: o.Course,
-    course_type: o.course_type,
-    is_compulsory: o.is_compulsory,
-    recommended_year: o.recommended_year,
-  }));
+// The refined schema has no programme-course catalog, so every active course
+// is offered to every eligible student - there's nothing left to scope by.
+async function getAvailableCourses(studentId, semesterId) {
+  await assertEligible(studentId, semesterId);
+  return Course.findAll({ order: [['course_code', 'ASC']] });
 }
 
 async function submitRegistration(studentId, semesterId, courseIds) {
@@ -48,14 +36,13 @@ async function submitRegistration(studentId, semesterId, courseIds) {
     throw new AppError('Duplicate courses are not allowed in one registration', 422);
   }
 
-  const offerings = await getAvailableCourses(studentId, semesterId);
-  const offeredCourseIds = new Set(offerings.map((o) => o.course.course_id));
-  const invalid = courseIds.filter((id) => !offeredCourseIds.has(id));
-  if (invalid.length > 0) {
-    throw new AppError(`Course(s) not offered for this programme/semester: ${invalid.join(', ')}`, 422);
-  }
+  await assertEligible(studentId, semesterId);
 
   const courses = await Course.findAll({ where: { course_id: courseIds } });
+  if (courses.length !== courseIds.length) {
+    throw new AppError('One or more selected courses do not exist', 422);
+  }
+
   const totalCredits = courses.reduce((sum, c) => sum + c.credits, 0);
   if (totalCredits < MIN_REGISTRATION_CREDITS || totalCredits > MAX_REGISTRATION_CREDITS) {
     throw new AppError(
@@ -75,46 +62,51 @@ async function submitRegistration(studentId, semesterId, courseIds) {
       throw new AppError('This semester\'s course registration is already approved', 409);
     }
 
-    await CourseRegistrationItem.destroy({ where: { course_registration_id: reg.course_registration_id }, transaction: t });
+    await CourseRegistrationItem.destroy({ where: { registration_id: reg.registration_id }, transaction: t });
 
-    const offeringByCourseId = new Map(offerings.map((o) => [o.course.course_id, o]));
+    const courseById = new Map(courses.map((c) => [c.course_id, c]));
     await CourseRegistrationItem.bulkCreate(
       courseIds.map((courseId) => ({
-        course_registration_id: reg.course_registration_id,
+        registration_id: reg.registration_id,
         course_id: courseId,
-        selection_type: offeringByCourseId.get(courseId).course_type,
+        is_elective: courseById.get(courseId).is_elective,
+        is_compulsory: !courseById.get(courseId).is_elective,
       })),
       { transaction: t },
     );
 
     await reg.update({
       status: COURSE_REGISTRATION_STATUS.SUBMITTED,
-      submitted_at: new Date(),
+      registration_date: new Date(),
     }, { transaction: t });
 
     return reg;
   });
 
-  return getRegistrationWithItems(registration.course_registration_id);
+  return getRegistrationWithItems(registration.registration_id);
 }
 
-async function getRegistrationWithItems(courseRegistrationId) {
-  return CourseRegistration.findByPk(courseRegistrationId, {
+async function getRegistrationWithItems(registrationId) {
+  return CourseRegistration.findByPk(registrationId, {
     include: [{ model: CourseRegistrationItem, include: [Course] }],
   });
 }
 
-async function decideRegistration(courseRegistrationId, decision, adminUserId) {
-  const registration = await CourseRegistration.findByPk(courseRegistrationId);
+async function decideRegistration(registrationId, decision, adminUserId) {
+  const registration = await CourseRegistration.findByPk(registrationId);
   if (!registration) throw new AppError('Course registration not found', 404);
   if (registration.status !== COURSE_REGISTRATION_STATUS.SUBMITTED) {
     throw new AppError('Only submitted registrations can be decided', 409);
   }
 
-  await registration.update({
-    status: decision === 'approve' ? COURSE_REGISTRATION_STATUS.APPROVED : COURSE_REGISTRATION_STATUS.REJECTED,
-    approved_at: new Date(),
-    approved_by: adminUserId,
+  const nextStatus = decision === 'approve' ? COURSE_REGISTRATION_STATUS.APPROVED : COURSE_REGISTRATION_STATUS.REJECTED;
+  await registration.update({ status: nextStatus });
+
+  await auditService.record({
+    actorId: adminUserId,
+    action: nextStatus.toUpperCase(),
+    entityName: 'course_registration',
+    entityId: registration.registration_id,
   });
 
   return registration;

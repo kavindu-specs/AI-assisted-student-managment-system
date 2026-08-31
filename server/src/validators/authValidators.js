@@ -1,12 +1,12 @@
 const { z } = require('zod');
 
 const studentLoginSchema = z.object({
-  registrationNo: z.string().min(1, 'Registration number is required'),
+  regNumber: z.string().min(1, 'Registration number is required'),
   password: z.string().min(1, 'Password is required'),
 });
 
 const adminLoginSchema = z.object({
-  email: z.string().email('A valid email is required'),
+  institutionalEmail: z.string().email('A valid institutional email is required'),
   password: z.string().min(1, 'Password is required'),
 });
 

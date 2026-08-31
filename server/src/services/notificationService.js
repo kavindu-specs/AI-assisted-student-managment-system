@@ -13,31 +13,34 @@ if (env.mail.host) {
 }
 
 /**
- * Creates a notification record and attempts delivery.
- * TODO: wire a real SMS provider for the 'SMS' channel; email uses SMTP when configured.
+ * Creates an in-app Notification record and, when an email address is given,
+ * best-effort sends it by mail too. The schema only models the in-app record
+ * (no channel/sent_at columns) so email delivery outcome is logged, not persisted.
+ * TODO: wire a real SMS provider if an SMS channel is ever needed.
  */
-async function notify({ userId, type, channel = 'Email', subject, message, to }) {
+async function notify({
+  userId, title, message, type = 'Info', email = null,
+}) {
   const notification = await Notification.create({
     user_id: userId,
-    type,
-    channel,
-    subject,
+    title,
     message,
+    type,
+    created_as: 'System',
   });
 
-  if (channel === 'Email') {
-    if (transporter && to) {
+  if (email) {
+    if (transporter) {
       try {
-        await transporter.sendMail({ from: env.mail.from, to, subject, text: message });
-        await notification.update({ sent_at: new Date() });
+        await transporter.sendMail({
+          from: env.mail.from, to: email, subject: title, text: message,
+        });
       } catch (err) {
         logger.error('Failed to send email notification:', err.message);
       }
     } else {
       logger.warn(`SMTP not configured - notification #${notification.notification_id} logged only.`);
     }
-  } else {
-    logger.warn(`Channel "${channel}" not yet wired to a real provider - notification #${notification.notification_id} logged only.`);
   }
 
   return notification;

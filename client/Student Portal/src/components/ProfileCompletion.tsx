@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { ShieldCheckIcon } from 'lucide-react';
+import { useStudentWorkflow } from '../StudentWorkflow';
 
 type ProfileCompletionProps = {
   currentStep?: number;
@@ -9,7 +10,15 @@ type ProfileCompletionProps = {
 const STEPS = ['Personal Details', 'Family Information', 'Emergency Contact', 'Upload Documents', 'Review & Submit'] as const;
 
 export function ProfileCompletion({ currentStep = 1 }: ProfileCompletionProps) {
-  const percentage = currentStep * 20;
+  const { profileSnapshot } = useStudentWorkflow();
+  // The ring shows the real backend profile_completion_pct (10 equally
+  // weighted checks - see server/docs/API.md). The STEPS list below still
+  // tracks wizard position (`currentStep`), which is a coarser, purely local
+  // notion of progress and won't always line up exactly with the backend
+  // percentage (e.g. a student can be on wizard step 2 while already having
+  // uploaded documents earlier, or vice versa).
+  const backendPct = profileSnapshot ? Math.round(Number(profileSnapshot.profile.profile_completion_pct)) : null;
+  const percentage = backendPct ?? currentStep * 20;
   const arc = percentage * 3.6;
 
   return (

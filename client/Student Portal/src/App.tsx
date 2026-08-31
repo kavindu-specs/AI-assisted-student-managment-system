@@ -162,7 +162,17 @@ function RegistrationConfirmationScreen() {
 }
 
 function RequireStage({ allowed, children }: { allowed: WorkflowStage[]; children: React.ReactNode }) {
-  const { stage } = useStudentWorkflow();
+  const { stage, loading } = useStudentWorkflow();
+  // While the initial GET /students/me/profile is in flight, `stage` still
+  // holds its optimistic pre-fetch guess - avoid bouncing the user through a
+  // wrong route (or flashing one) before the real stage is known.
+  if (loading) {
+    return (
+      <div className="flex h-[100dvh] w-full items-center justify-center bg-slate-50">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-maroon/30 border-t-maroon" />
+      </div>
+    );
+  }
   if (allowed.includes(stage)) return <>{children}</>;
   if (stage === 'first-login') return <Navigate to="/first-login" replace />;
   if (stage === 'profile') return <Navigate to="/profile" replace />;

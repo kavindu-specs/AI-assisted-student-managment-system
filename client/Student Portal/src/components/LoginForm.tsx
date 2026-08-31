@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { UserIcon, LockIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon } from 'lucide-react';
+import { api, ApiError, setToken } from '../lib/apiClient';
 
 export function LoginForm() {
   const [registration, setRegistration] = useState('');
@@ -10,12 +11,35 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError('');
+    if (!registration || !password) {
+      setError('Enter your registration number and password.');
+      return;
+    }
     setSubmitting(true);
-    window.setTimeout(() => navigate('/first-login'), 700);
+    try {
+      const result = await api.post<{
+        requiresFirstLogin: boolean;
+        preAuthToken?: string;
+        token?: string;
+      }>('/auth/student/login', { regNumber: registration, password });
+
+      if (result.requiresFirstLogin && result.preAuthToken) {
+        sessionStorage.setItem('rms-student-preauth-token', result.preAuthToken);
+        navigate('/first-login');
+      } else if (result.token) {
+        setToken(result.token);
+        navigate('/dashboard');
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Login failed. Please try again.');
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -117,6 +141,12 @@ export function LoginForm() {
             Forgot password?
           </button>
         </div>
+
+        {error && (
+          <p role="alert" className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700">
+            {error}
+          </p>
+        )}
 
         {/* Submit */}
         <motion.button

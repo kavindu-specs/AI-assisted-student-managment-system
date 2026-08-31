@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStudentWorkflow } from '../StudentWorkflow';
 import { ArrowLeftIcon, CheckCircle2Icon, FileTextIcon, GraduationCapIcon, MailIcon, PhoneIcon, SendIcon, ShieldCheckIcon, UserRoundIcon } from 'lucide-react';
@@ -26,13 +26,39 @@ function ReviewItem({ icon: Icon, label, value }: ReviewItemProps) {
 export function ReviewSubmitForm() {
   const [confirmed, setConfirmed] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { submitProfile: submitStudentProfile } = useStudentWorkflow();
+  const { profileSnapshot, refresh, submitProfile: markVerificationStage } = useStudentWorkflow();
 
-  function submitProfile() {
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // There is no explicit "submit profile" endpoint in this API - the profile
+  // is just whatever's been PATCHed so far, with no separate submission/lock
+  // action. "Submitting" here means: re-fetch the profile to confirm its
+  // completion percentage looks done, and if so, move the local wizard on to
+  // the 'verification' stage. There's genuinely nothing else to POST.
+  async function handleSubmit() {
     if (!confirmed) return;
-    submitStudentProfile();
-    navigate('/registration-status');
+    setError('');
+    setSubmitting(true);
+    try {
+      const snapshot = await refresh();
+      const pct = snapshot ? Number(snapshot.profile.profile_completion_pct) : 0;
+      if (pct < 100) {
+        setError(`Your profile is only ${Math.round(pct)}% complete. Please finish all required sections (personal details, family information, emergency contact, photo, signature and at least one document) before submitting.`);
+        return;
+      }
+      markVerificationStage();
+      setSubmitted(true);
+    } catch (err) {
+      setError('Could not confirm your profile status. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (submitted) {
@@ -52,6 +78,10 @@ export function ReviewSubmitForm() {
 
   }
 
+  const student = profileSnapshot?.student;
+  const profile = profileSnapshot?.profile;
+  const documentCount = profileSnapshot?.documents.length ?? 0;
+
   return (
     <section className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white">
       <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
@@ -69,10 +99,10 @@ export function ReviewSubmitForm() {
             <h3 id="review-personal" className="text-sm font-bold text-slate-800">Personal details</h3>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <ReviewItem icon={UserRoundIcon} label="Student name" value="Nimesh Perera" />
-            <ReviewItem icon={MailIcon} label="University email" value="nimesh.perera@example.com" />
-            <ReviewItem icon={PhoneIcon} label="Mobile number" value="+94 77 123 4567" />
-            <ReviewItem icon={FileTextIcon} label="NIC number" value="200312345678" />
+            <ReviewItem icon={UserRoundIcon} label="Student name" value={student?.full_name || '—'} />
+            <ReviewItem icon={MailIcon} label="University email" value={profile?.email || '—'} />
+            <ReviewItem icon={PhoneIcon} label="Mobile number" value={profile?.contact_no || '—'} />
+            <ReviewItem icon={FileTextIcon} label="NIC number" value={student?.nic || '—'} />
           </div>
         </section>
 
@@ -82,8 +112,9 @@ export function ReviewSubmitForm() {
             <h3 id="review-academic" className="text-sm font-bold text-slate-800">Registration summary</h3>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <ReviewItem icon={GraduationCapIcon} label="Programme" value="BSc Hons (Agriculture)" />
-            <ReviewItem icon={ShieldCheckIcon} label="Documents" value="5 required files uploaded" />
+            <ReviewItem icon={GraduationCapIcon} label="Programme" value={student?.Programme?.programme_name || '—'} />
+            <ReviewItem icon={ShieldCheckIcon} label="Documents" value={`${documentCount} file${documentCount === 1 ? '' : 's'} uploaded`} />
+            <ReviewItem icon={CheckCircle2Icon} label="Profile completion" value={`${Math.round(Number(profile?.profile_completion_pct ?? 0))}%`} />
           </div>
         </section>
 
@@ -91,6 +122,12 @@ export function ReviewSubmitForm() {
           <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-maroon focus:ring-maroon" />
           <span className="text-xs leading-relaxed text-slate-700">I confirm that the information provided is accurate and complete. I understand that Rajarata University may use these details for academic and registration records.</span>
         </label>
+
+        {error && (
+          <p role="alert" className="rounded-md bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+            {error}
+          </p>
+        )}
       </div>
 
       <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3">
@@ -98,8 +135,8 @@ export function ReviewSubmitForm() {
           <ArrowLeftIcon className="h-4 w-4" />
           Previous
         </button>
-        <button type="button" onClick={submitProfile} disabled={!confirmed} className="flex w-40 items-center justify-center gap-2 rounded-md bg-maroon py-2 text-xs font-bold text-white shadow-sm transition hover:bg-maroon-deep focus:outline-none focus:ring-2 focus:ring-maroon/30 disabled:cursor-not-allowed disabled:opacity-45">
-          Submit Profile
+        <button type="button" onClick={handleSubmit} disabled={!confirmed || submitting} className="flex w-40 items-center justify-center gap-2 rounded-md bg-maroon py-2 text-xs font-bold text-white shadow-sm transition hover:bg-maroon-deep focus:outline-none focus:ring-2 focus:ring-maroon/30 disabled:cursor-not-allowed disabled:opacity-45">
+          {submitting ? 'Checking…' : 'Submit Profile'}
           <SendIcon className="h-4 w-4" />
         </button>
       </div>

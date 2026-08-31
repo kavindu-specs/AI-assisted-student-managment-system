@@ -5,7 +5,7 @@ const { documentUpload } = require('../middleware/uploadMiddleware');
 const { authenticate, requireRole } = require('../middleware/authMiddleware');
 const { ROLES } = require('../config/constants');
 const {
-  personalDetailsSchema, contactFamilySchema, documentUploadSchema, mediaUploadSchema, courseRegistrationSchema,
+  profileUpdateSchema, documentUploadSchema, courseRegistrationSchema,
 } = require('../validators/studentValidators');
 
 const router = express.Router();
@@ -13,23 +13,20 @@ const router = express.Router();
 router.use(authenticate, requireRole(ROLES.STUDENT));
 
 router.get('/me/profile', studentController.getMyProfile);
-router.patch('/me/personal-details', validateRequest(personalDetailsSchema), studentController.updatePersonalDetails);
-router.patch('/me/contact-family', validateRequest(contactFamilySchema), studentController.updateContactFamilyInfo);
+router.patch('/me/profile', validateRequest(profileUpdateSchema), studentController.updateMyProfile);
 
+router.post('/me/photo', documentUpload.single('file'), studentController.uploadPhoto);
+router.post('/me/signature', documentUpload.single('file'), studentController.uploadSignature);
 router.post(
   '/me/documents',
   documentUpload.single('file'),
   validateRequest(documentUploadSchema),
   studentController.uploadDocument,
 );
-router.post(
-  '/me/media',
-  documentUpload.single('file'),
-  validateRequest(mediaUploadSchema),
-  studentController.uploadMedia,
-);
+
+router.get('/me/photo/:photoId/file', studentController.getMyPhotoFile);
+router.get('/me/signature/:signatureId/file', studentController.getMySignatureFile);
 router.get('/me/documents/:documentId/file', studentController.getMyDocumentFile);
-router.get('/me/media/:mediaId/file', studentController.getMyMediaFile);
 
 router.get('/me/courses/available', studentController.getAvailableCourses);
 router.post(

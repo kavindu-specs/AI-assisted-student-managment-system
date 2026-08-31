@@ -4,16 +4,20 @@ const sequelize = require('../config/db');
 const Notification = sequelize.define('Notification', {
   notification_id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   user_id: { type: DataTypes.INTEGER, allowNull: false },
-  type: { type: DataTypes.STRING(50), allowNull: false },
-  channel: {
-    type: DataTypes.ENUM('Email', 'SMS', 'In-App'),
-    allowNull: false,
-    defaultValue: 'Email',
-  },
-  subject: { type: DataTypes.STRING(255), allowNull: true },
+  title: { type: DataTypes.STRING(200), allowNull: false },
   message: { type: DataTypes.TEXT, allowNull: false },
+  type: {
+    type: DataTypes.ENUM('Info', 'Success', 'Warning', 'Error'),
+    allowNull: false,
+    defaultValue: 'Info',
+  },
+  is_read: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   created_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
-  sent_at: { type: DataTypes.DATE, allowNull: true },
+  created_as: {
+    type: DataTypes.ENUM('System', 'User'),
+    allowNull: false,
+    defaultValue: 'System',
+  },
 }, {
   tableName: 'notification',
   timestamps: true,

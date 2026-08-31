@@ -9,7 +9,8 @@ const {
   approvalDecisionSchema,
   courseRegistrationDecisionSchema,
   documentVerificationSchema,
-  semesterActivationSchema,
+  correctionRequestSchema,
+  correctionDecisionSchema,
 } = require('../validators/adminValidators');
 
 const router = express.Router();
@@ -30,7 +31,17 @@ router.post(
   validateRequest(bulkImportSchema),
   adminController.bulkImportStudents,
 );
-router.get('/imports/:batchId', adminController.getImportBatch);
+router.post(
+  '/imports/:batchId/corrections',
+  validateRequest(correctionRequestSchema),
+  adminController.createCorrectionRequest,
+);
+router.get('/imports/:batchId/corrections', adminController.listCorrectionRequests);
+router.patch(
+  '/corrections/:correctionId',
+  validateRequest(correctionDecisionSchema),
+  adminController.decideCorrectionRequest,
+);
 
 router.get('/documents/:documentId/file', adminController.getDocumentFile);
 router.patch(
@@ -38,18 +49,8 @@ router.patch(
   validateRequest(documentVerificationSchema),
   adminController.verifyDocument,
 );
-router.get('/media/:mediaId/file', adminController.getMediaFile);
-router.patch(
-  '/media/:mediaId/verify',
-  validateRequest(documentVerificationSchema),
-  adminController.verifyMedia,
-);
-
-router.post(
-  '/semester-registrations/activate',
-  validateRequest(semesterActivationSchema),
-  adminController.activateSemesterRegistration,
-);
+router.get('/photos/:photoId/file', adminController.getPhotoFile);
+router.get('/signatures/:signatureId/file', adminController.getSignatureFile);
 
 router.post(
   '/course-registrations/:decision(approve|reject)',

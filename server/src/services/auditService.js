@@ -1,15 +1,14 @@
 const { AuditLog } = require('../models');
 
-async function record({ userId, studentId = null, entityType, entityId, action, oldValue = null, newValue = null, reason = null, ipAddress = null }) {
+async function record({
+  actorId, action, entityName, entityId, description = null, ipAddress = null,
+}) {
   return AuditLog.create({
-    user_id: userId,
-    student_id: studentId,
-    entity_type: entityType,
-    entity_id: String(entityId),
+    actor_id: actorId,
     action,
-    old_value: oldValue,
-    new_value: newValue,
-    reason,
+    entity_name: entityName,
+    entity_id: entityId,
+    description,
     ip_address: ipAddress,
   });
 }

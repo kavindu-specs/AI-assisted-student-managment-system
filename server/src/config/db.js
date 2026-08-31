@@ -11,6 +11,15 @@ const sequelize = new Sequelize(env.db.name, env.db.user, env.db.password, {
     underscored: true,
     timestamps: false, // each table declares its own timestamp columns explicitly
   },
+  // Each clustered worker process gets its own Sequelize instance with its
+  // own pool - MySQL sees up to (poolMax * CLUSTER_WORKERS) connections
+  // total, so keep poolMax modest rather than defaulting per-instance.
+  pool: {
+    max: env.db.poolMax,
+    min: 0,
+    acquire: 30000,
+    idle: 10000,
+  },
 });
 
 module.exports = sequelize;
