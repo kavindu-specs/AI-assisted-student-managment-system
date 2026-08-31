@@ -1,48 +1,51 @@
 const { fn, col, literal } = require('sequelize');
 const {
-  Student, Programme, Department, Intake, CourseRegistration, sequelize,
+  Student, Programme, Faculty, Intake, CourseRegistration,
 } = require('../models');
+const { STUDENT_CURRENT_STATUS } = require('../config/constants');
 
 async function getSummary() {
-  const [studentCount, intakeCount, registrationCount, programmeCount] = await Promise.all([
+  const [studentCount, registeredCount, activeIntakeCount, courseRegistrationCount, programmeCount] = await Promise.all([
     Student.count(),
-    Intake.count({ where: { status: 'Active' } }),
+    Student.count({ where: { current_status: STUDENT_CURRENT_STATUS.REGISTERED } }),
+    Intake.count(),
     CourseRegistration.count(),
-    Programme.count({ where: { status: 'Active' } }),
+    Programme.count(),
   ]);
 
   return {
     students: studentCount,
-    activeIntakes: intakeCount,
-    courseRegistrations: registrationCount,
-    activeProgrammes: programmeCount,
+    registeredStudents: registeredCount,
+    intakes: activeIntakeCount,
+    courseRegistrations: courseRegistrationCount,
+    programmes: programmeCount,
   };
 }
 
-async function getDepartmentDistribution() {
+async function getFacultyDistribution() {
   const rows = await Student.findAll({
     attributes: [[fn('COUNT', col('Student.student_id')), 'count']],
     include: [{
       model: Programme,
       attributes: [],
       required: true,
-      include: [{ model: Department, attributes: ['department_id', 'department_name'], required: true }],
+      include: [{ model: Faculty, attributes: ['faculty_id', 'faculty_name'], required: true }],
     }],
-    group: ['Programme.Department.department_id'],
+    group: ['Programme.Faculty.faculty_id'],
     raw: true,
   });
 
   return rows.map((r) => ({
-    department: r['Programme.Department.department_name'],
+    faculty: r['Programme.Faculty.faculty_name'],
     count: Number(r.count),
   }));
 }
 
-async function getMonthlyRegistrations(year) {
-  const rows = await Student.findAll({
+async function getMonthlyCourseRegistrations(year) {
+  const rows = await CourseRegistration.findAll({
     attributes: [
       [fn('MONTH', col('registration_date')), 'month'],
-      [fn('COUNT', col('student_id')), 'count'],
+      [fn('COUNT', col('registration_id')), 'count'],
     ],
     where: literal(`YEAR(registration_date) = ${Number(year) || new Date().getFullYear()}`),
     group: [fn('MONTH', col('registration_date'))],
@@ -53,4 +56,4 @@ async function getMonthlyRegistrations(year) {
   return rows.map((r) => ({ month: Number(r.month), count: Number(r.count) }));
 }
 
-module.exports = { getSummary, getDepartmentDistribution, getMonthlyRegistrations };
+module.exports = { getSummary, getFacultyDistribution, getMonthlyCourseRegistrations };

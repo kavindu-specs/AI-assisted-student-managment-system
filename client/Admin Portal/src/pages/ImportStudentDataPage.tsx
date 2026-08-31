@@ -7,7 +7,6 @@ import {
   BellIcon,
   BookOpenIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
   ClipboardListIcon,
   DownloadIcon,
   FileSpreadsheetIcon,
@@ -21,20 +20,19 @@ import {
   XIcon } from
 'lucide-react';
 import { LogoutButton } from '../components/LogoutButton';
-import { ImportedStudent, saveImport } from '../lib/registrationStore';
+import { api, ApiError } from '../lib/apiClient';
+import { ImportApiResult, saveImportResult } from '../lib/registrationStore';
 
 type Configuration = {
-  intake: string;
-  faculty: string;
-  programme: string;
-  academicYear: string;
+  programmeId: string;
+  intakeId: string;
+  regulationId: string;
 };
 
 const initialConfiguration: Configuration = {
-  intake: '',
-  faculty: '',
-  programme: '',
-  academicYear: ''
+  programmeId: '',
+  intakeId: '',
+  regulationId: ''
 };
 
 const navigationItems = [
@@ -47,14 +45,13 @@ const navigationItems = [
 
 
 const expectedColumns = [
-{ key: 'A', label: 'Full Name', required: false },
-{ key: 'B', label: 'NIC Number', required: false },
-{ key: 'C', label: 'Date of Birth', required: false },
-{ key: 'D', label: 'Gender', required: false },
-{ key: 'E', label: 'Email Address', required: false },
-{ key: 'F', label: 'Phone Number', required: false },
-{ key: 'G', label: 'Address', required: false },
-{ key: 'H', label: 'O/L Index No.', required: false }];
+{ key: 'A', label: 'Full Name', required: true },
+{ key: 'B', label: 'NIC', required: true },
+{ key: 'C', label: 'DOB', required: true },
+{ key: 'D', label: 'Gender', required: true },
+{ key: 'E', label: 'Email', required: false },
+{ key: 'F', label: 'Phone', required: false },
+{ key: 'G', label: 'Address', required: false }];
 
 
 export function ImportStudentDataPage() {
@@ -62,7 +59,7 @@ export function ImportStudentDataPage() {
   const [file, setFile] = useState<File | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [validationMessage, setValidationMessage] = useState('');
-  const [isImported, setIsImported] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -71,7 +68,6 @@ export function ImportStudentDataPage() {
   const updateConfiguration = (field: keyof Configuration, value: string) => {
     setConfiguration((current) => ({ ...current, [field]: value }));
     setValidationMessage('');
-    setIsImported(false);
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -85,11 +81,10 @@ export function ImportStudentDataPage() {
     }
     setFile(selectedFile);
     setValidationMessage('');
-    setIsImported(false);
   };
 
   const downloadTemplate = () => {
-    const template = 'Full Name,NIC Number,Date of Birth,Gender,Email Address,Phone Number,Address,O/L Index No.\n';
+    const template = 'Full Name,NIC,DOB,Gender,Email,Phone,Address\n';
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([template], { type: 'text/csv' }));
     link.download = 'rajarata-student-import-template.csv';
@@ -97,18 +92,24 @@ export function ImportStudentDataPage() {
     URL.revokeObjectURL(link.href);
   };
 
-  const validateFile = async () => {
-    if (!isReadyToValidate) return;
-    const records: ImportedStudent[] = [{
-      registration: `RUSL/AG/${new Date().getFullYear()}/0001`,
-      name: file.name,
-      nic: '',
-      email: '',
-      status: 'Valid',
-      message: 'Accepted by file type for demo review.'
-    }];
-    saveImport(records, configuration);
-    navigate('/validation-results');
+  const submitImport = async () => {
+    if (!isReadyToValidate || !file) return;
+    setValidationMessage('');
+    setSubmitting(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('programmeId', configuration.programmeId);
+      form.append('intakeId', configuration.intakeId);
+      form.append('regulationId', configuration.regulationId);
+      const result = await api.postForm<ImportApiResult>('/admin/imports', form);
+      saveImportResult(result);
+      navigate('/validation-results');
+    } catch (err) {
+      setValidationMessage(err instanceof ApiError ? err.message : 'Import failed. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -144,17 +145,16 @@ export function ImportStudentDataPage() {
             <ol className="mb-7 hidden items-center justify-between gap-3 lg:flex" aria-label="Import progress">
               <Step number="1" label="Configure Options" active /><Step number="2" label="Upload File" /><Step number="3" label="Validate" /><Step number="4" label="Import" />
             </ol>
-            {validationMessage && <div role="status" className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{validationMessage}</span><button type="button" onClick={() => setValidationMessage('')} aria-label="Dismiss message"><XIcon className="h-4 w-4" /></button></div>}
-            {isImported && <div role="status" className="mb-5 rounded-lg border border-gold/50 bg-gold/10 px-4 py-3 text-sm font-medium text-maroon">Import scheduled successfully. You will be notified when processing is complete.</div>}
+            {validationMessage && <div role="alert" className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{validationMessage}</span><button type="button" onClick={() => setValidationMessage('')} aria-label="Dismiss message"><XIcon className="h-4 w-4" /></button></div>}
 
             <div className="grid gap-5 lg:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)]">
               <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
-                <h2 className="font-bold text-slate-900">Import Configuration</h2><p className="mt-1 text-xs text-slate-500">Choose the intake details for this demo upload</p>
+                <h2 className="font-bold text-slate-900">Import Configuration</h2><p className="mt-1 text-xs text-slate-500">Every student in the sheet is assigned to this one programme, intake, and regulation</p>
                 <div className="mt-6 space-y-4">
-                  <SelectField label="Select Intake" value={configuration.intake} onChange={(value) => updateConfiguration('intake', value)} options={['July 2024 Intake', 'January 2025 Intake']} placeholder="Choose intake batch..." />
-                  <SelectField label="Select Faculty" value={configuration.faculty} onChange={(value) => updateConfiguration('faculty', value)} options={['Faculty of Agriculture']} placeholder="Choose faculty..." />
-                  <SelectField label="Select Programme" value={configuration.programme} onChange={(value) => updateConfiguration('programme', value)} options={['BSc Hons (Agriculture)', 'Postgraduate Diploma in Rural Development', 'Master of Agriculture', 'MSc in Agroecology', 'MPhil in Agriculture', 'PhD in Agriculture']} placeholder="Choose programme..." />
-                  <SelectField label="Select Academic Year" value={configuration.academicYear} onChange={(value) => updateConfiguration('academicYear', value)} options={['2024 / 2025', '2025 / 2026']} placeholder="Choose year..." />
+                  <NumberField label="Programme ID" value={configuration.programmeId} onChange={(value) => updateConfiguration('programmeId', value)} placeholder="e.g. 1" />
+                  <NumberField label="Intake ID" value={configuration.intakeId} onChange={(value) => updateConfiguration('intakeId', value)} placeholder="e.g. 1" />
+                  <NumberField label="Regulation ID" value={configuration.regulationId} onChange={(value) => updateConfiguration('regulationId', value)} placeholder="e.g. 1" />
+                  <p className="flex items-start gap-2 text-xs text-slate-500"><InfoIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" /> There is no lookup endpoint for programmes/intakes/regulations yet — enter the numeric IDs configured in the academic setup.</p>
                 </div>
               </section>
 
@@ -165,13 +165,13 @@ export function ImportStudentDataPage() {
                   <span className="flex h-14 w-14 items-center justify-center rounded-xl bg-maroon/10 text-maroon"><UploadIcon className="h-6 w-6" /></span>
                   {file ? <><span className="mt-4 text-sm font-bold text-slate-900">{file.name}</span><span className="mt-1 text-xs text-slate-500">{Math.ceil(file.size / 1024)} KB · Select another file to replace</span></> : <><span className="mt-4 text-base font-bold text-slate-900">Drag & drop your file here</span><span className="mt-1 text-sm text-slate-500">or <span className="font-semibold text-maroon">browse files</span></span><span className="mt-4 text-xs text-slate-400">.xlsx · .xls · .csv — max 10 MB</span></>}
                 </button>
-                <div className="mt-5 flex flex-wrap gap-3"><button type="button" disabled={!isReadyToValidate} onClick={validateFile} className="flex flex-1 items-center justify-center gap-2 rounded-md bg-maroon px-4 py-3 text-sm font-bold text-white transition hover:bg-maroon-light disabled:cursor-not-allowed disabled:bg-slate-300"><CheckCircle2Icon className="h-4 w-4" /> Validate File</button><button type="button" onClick={() => {setFile(null);setValidationMessage('');setIsImported(false);}} className="rounded-md border border-stone-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-maroon hover:text-maroon">Cancel</button></div>
-                <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><InfoIcon className="h-4 w-4" /> Complete all configuration options and upload a file to validate.</p>
+                <div className="mt-5 flex flex-wrap gap-3"><button type="button" disabled={!isReadyToValidate || submitting} onClick={submitImport} className="flex flex-1 items-center justify-center gap-2 rounded-md bg-maroon px-4 py-3 text-sm font-bold text-white transition hover:bg-maroon-light disabled:cursor-not-allowed disabled:bg-slate-300"><CheckCircle2Icon className="h-4 w-4" /> {submitting ? 'Uploading…' : 'Upload & Validate'}</button><button type="button" disabled={submitting} onClick={() => {setFile(null);setValidationMessage('');}} className="rounded-md border border-stone-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-maroon hover:text-maroon disabled:opacity-50">Cancel</button></div>
+                <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><InfoIcon className="h-4 w-4" /> Complete all configuration fields and upload a file to import.</p>
               </section>
             </div>
 
             <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)]">
-              <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-center gap-2"><InfoIcon className="h-4 w-4 text-gold-dark" /><h2 className="font-bold text-slate-900">Demo File Notes</h2></div><ul className="mt-4 space-y-2 text-sm text-slate-600"><li>• Accepted file types: .xlsx, .xls, .csv</li><li>• The demo checks only the file type</li><li>• Student records and file content are not read or validated</li></ul><button type="button" onClick={downloadTemplate} className="mt-5 flex items-center gap-2 text-sm font-semibold text-maroon hover:text-gold-dark"><DownloadIcon className="h-4 w-4" /> Download optional CSV template</button></section>
+              <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-center gap-2"><InfoIcon className="h-4 w-4 text-gold-dark" /><h2 className="font-bold text-slate-900">File Notes</h2></div><ul className="mt-4 space-y-2 text-sm text-slate-600"><li>• Accepted file types: .xlsx, .xls, .csv (max 10 MB)</li><li>• Every row is validated server-side; rows with a hard error create no account</li><li>• Passing rows (Valid or Warning) get a student account created immediately, starting Inactive/Prospective</li></ul><button type="button" onClick={downloadTemplate} className="mt-5 flex items-center gap-2 text-sm font-semibold text-maroon hover:text-gold-dark"><DownloadIcon className="h-4 w-4" /> Download CSV template</button></section>
               <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-center gap-2"><FileSpreadsheetIcon className="h-4 w-4 text-maroon" /><h2 className="font-bold text-slate-900">Expected Columns</h2></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{expectedColumns.map((column) => <div key={column.key} className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded bg-maroon text-[10px] font-bold text-white">{column.key}</span><span className="min-w-0 flex-1 text-sm text-slate-700">{column.label}</span><span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${column.required ? 'bg-maroon/10 text-maroon' : 'bg-slate-100 text-slate-500'}`}>{column.required ? 'Required' : 'Optional'}</span></div>)}</div></section>
             </div>
           </div>
@@ -183,8 +183,8 @@ export function ImportStudentDataPage() {
 
 }
 
-function SelectField({ label, value, onChange, options, placeholder }: {label: string;value: string;onChange: (value: string) => void;options: string[];placeholder: string;}) {
-  return <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-maroon">{label}</span><span className="relative mt-2 block"><select value={value} onChange={(event) => onChange(event.target.value)} className="w-full appearance-none rounded-md border border-stone-200 bg-stone-50 px-3 py-3 text-sm text-slate-800 outline-none transition focus:border-maroon focus:bg-white focus:ring-2 focus:ring-maroon/15"><option value="">{placeholder}</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select><ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /></span></label>;
+function NumberField({ label, value, onChange, placeholder }: {label: string;value: string;onChange: (value: string) => void;placeholder: string;}) {
+  return <label className="block"><span className="text-xs font-bold uppercase tracking-wider text-maroon">{label}</span><input type="number" min={1} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-2 w-full rounded-md border border-stone-200 bg-stone-50 px-3 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-maroon focus:bg-white focus:ring-2 focus:ring-maroon/15" /></label>;
 }
 
 function Step({ number, label, active = false }: {number: string;label: string;active?: boolean;}) {

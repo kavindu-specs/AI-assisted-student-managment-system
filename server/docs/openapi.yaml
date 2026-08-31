@@ -1,0 +1,1582 @@
+openapi: 3.0.3
+info:
+  title: Rajarata University SMS API
+  description: >
+    REST API for the Rajarata University Student Management System — student
+    registration, document verification, semester & course registration, and
+    reporting. See `server/docs/API.md` for prose commentary (identity model,
+    known schema gaps/simplifications) that doesn't fit cleanly into a spec.
+  version: "2.1.0"
+  contact:
+    name: Rajarata University IT Division
+    email: itsupport@rjt.ac.lk
+
+servers:
+  - url: http://localhost:4000/api
+    description: Local development
+  - url: /api
+    description: Relative to whatever host this API is deployed on
+
+tags:
+  - name: Auth
+    description: Login flows for both roles. No auth required except `GET /auth/me`.
+  - name: Student
+    description: Self-service routes for the calling student (role `student`). Every route acts on `req.user.studentId` — there is no `:studentId` param on this router.
+  - name: Admin
+    description: Administration routes (role `admin`).
+  - name: Misc
+    description: Health checks and anything not under a specific role.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Misc]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                example:
+                  success: true
+                  message: API is healthy
+                  data: null
+
+  /auth/student/login:
+    post:
+      tags: [Auth]
+      summary: Student login
+      description: Rate-limited (20 requests / 15 min / IP).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudentLoginRequest"
+      responses:
+        "200":
+          description: >
+            Either a pre-auth token (first login still pending, i.e.
+            `student_account.login_completed = false`) or a full access token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - $ref: "#/components/schemas/RequiresFirstLoginResult"
+                          - $ref: "#/components/schemas/StudentLoginResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          description: Too many login attempts, please try again later
+
+  /auth/student/first-login:
+    post:
+      tags: [Auth]
+      summary: Complete first login (forced password reset)
+      description: Requires the `preAuthToken` from `POST /auth/student/login` (`step: "first-login"`), sent as a Bearer token.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FirstLoginRequest"
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /auth/admin/login:
+    post:
+      tags: [Auth]
+      summary: Admin login (step 1 of 2 — always followed by OTP)
+      description: >
+        Rate-limited. Email must end with the configured `ADMIN_EMAIL_DOMAIN`
+        (default `agri.rjt.ac.lk`) and match an `ADMIN_USER.institutional_email`.
+        OTP is mandatory for every admin login — there is no per-account 2FA toggle.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminLoginRequest"
+      responses:
+        "200":
+          description: A 6-digit OTP has been emailed to the account; verify it to get a full access token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RequiresOtpResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          description: Too many login attempts, please try again later
+
+  /auth/admin/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify the admin OTP (step 2 of 2)
+      description: Requires the `preAuthToken` from `POST /auth/admin/login` (`step: "otp"`), sent as a Bearer token.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtpVerifyRequest"
+      responses:
+        "200":
+          description: Verification successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current session
+      description: Returns the decoded JWT payload — a cheap way for a client to check "am I still logged in, and as whom".
+      responses:
+        "200":
+          description: Decoded token payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/JwtPayload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /students/me/profile:
+    get:
+      tags: [Student]
+      summary: Full profile snapshot
+      responses:
+        "200":
+          description: Student record, profile, active photo/signature, and documents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/StudentProfileSnapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Student]
+      summary: Update my profile
+      description: All fields optional — send only what changed. `profile_completion_pct` is recomputed server-side after every save.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdateRequest"
+      responses:
+        "200":
+          description: Updated StudentProfile row
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/StudentProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /students/me/photo:
+    post:
+      tags: [Student]
+      summary: Upload profile photo
+      description: Deactivates any previous photo.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: jpg/png/pdf, ≤5MB
+      responses:
+        "201":
+          description: Created ProfilePhotograph row
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProfilePhotograph"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /students/me/signature:
+    post:
+      tags: [Student]
+      summary: Upload signature
+      description: Same shape as the photo endpoint, for the Signature table. Deactivates any previous signature.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: jpg/png/pdf, ≤5MB
+      responses:
+        "201":
+          description: Created Signature row
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Signature"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /students/me/documents:
+    post:
+      tags: [Student]
+      summary: Upload a supporting document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, docType]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: jpg/png/pdf, ≤5MB
+                docType:
+                  $ref: "#/components/schemas/DocType"
+      responses:
+        "201":
+          description: Created SupportingDocument row (is_verified is false until an admin reviews it)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SupportingDocument"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /students/me/photo/{photoId}/file:
+    get:
+      tags: [Student]
+      summary: Download my photo file
+      description: Streams the raw file — only if it belongs to the calling student (404 otherwise). No unauthenticated static file route exists.
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /students/me/signature/{signatureId}/file:
+    get:
+      tags: [Student]
+      summary: Download my signature file
+      parameters:
+        - $ref: "#/components/parameters/SignatureId"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /students/me/documents/{documentId}/file:
+    get:
+      tags: [Student]
+      summary: Download my document file
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /students/me/courses/available:
+    get:
+      tags: [Student]
+      summary: List available courses
+      description: >
+        Requires `current_status = 'Registered'` (403 otherwise). The schema
+        has no programme-course catalog, so this lists **every** Course row —
+        there is nothing left to scope by programme or year.
+      parameters:
+        - name: semesterId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: All courses
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Course"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /students/me/courses/register:
+    post:
+      tags: [Student]
+      summary: Submit course registration
+      description: >
+        Validates no duplicate course IDs, all IDs exist, and total credits
+        are between `MIN_REGISTRATION_CREDITS` (15) and
+        `MAX_REGISTRATION_CREDITS` (22). Re-submitting replaces the previous
+        course list for that semester (409 if already Approved).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CourseRegistrationRequest"
+      responses:
+        "200":
+          description: The CourseRegistration with its items (each including its Course)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CourseRegistration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/students:
+    get:
+      tags: [Admin]
+      summary: List students
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/CurrentStatus"
+        - name: programmeId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Students with Programme → Faculty nested
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Student"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/students/{studentId}:
+    get:
+      tags: [Admin]
+      summary: Get a single student
+      parameters:
+        - $ref: "#/components/parameters/StudentId"
+      responses:
+        "200":
+          description: Single student, same includes as the list endpoint
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Student"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/students/{decision}:
+    post:
+      tags: [Admin]
+      summary: Approve or reject one or more prospective students
+      description: >
+        Processes each ID independently — one failure doesn't stop the rest.
+        Only students currently `Prospective` can be decided. **Approve**:
+        `current_status`→`Registered`, `account_status`→`Active`, a fresh
+        temp password is generated, emailed, and returned once in
+        `tempPassword` (never persisted in plain text). **Reject**:
+        `account_status`→`Suspended` (no dedicated "Rejected" value in this
+        schema), `current_status` stays `Prospective`.
+      parameters:
+        - name: decision
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [approve, reject]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionRequest"
+      responses:
+        "200":
+          description: Per-student result array
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ApprovalResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/imports:
+    post:
+      tags: [Admin]
+      summary: Bulk import students from a spreadsheet
+      description: >
+        Every student in the sheet is assigned to the one given
+        programme/intake/regulation. Expected columns: `Full Name`, `NIC`,
+        `DOB`, `Gender`, `Email`, `Phone`, `Address`. Passing rows (Valid or
+        Warning) get a full identity created immediately (UserAccount +
+        Student + StudentAccount + StudentProfile). The schema has no
+        per-row import table — `rows` only ever exists in this one response.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, programmeId, intakeId, regulationId]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: .xlsx/.xls/.csv, ≤10MB
+                programmeId:
+                  type: integer
+                intakeId:
+                  type: integer
+                regulationId:
+                  type: integer
+      responses:
+        "201":
+          description: Import batch + per-row validation results
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ImportResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/imports/{batchId}/corrections:
+    post:
+      tags: [Admin]
+      summary: Raise a correction request for an import batch
+      description: Batch-level, not per-row — the schema doesn't model row-level corrections.
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CorrectionRequestBody"
+      responses:
+        "201":
+          description: Created CorrectionRequest
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CorrectionRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [Admin]
+      summary: List correction requests for a batch
+      description: Newest first.
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+      responses:
+        "200":
+          description: Correction requests for this batch
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CorrectionRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/corrections/{correctionId}:
+    patch:
+      tags: [Admin]
+      summary: Decide a correction request
+      parameters:
+        - $ref: "#/components/parameters/CorrectionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CorrectionDecisionRequest"
+      responses:
+        "200":
+          description: Updated CorrectionRequest
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CorrectionRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/documents/{documentId}/file:
+    get:
+      tags: [Admin]
+      summary: Download a student's document file
+      description: Streams the raw file for any student, to review before verifying.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/documents/{documentId}/verify:
+    patch:
+      tags: [Admin]
+      summary: Verify or reject a supporting document
+      description: >
+        `reason` is written to the audit log only —
+        `supporting_document` has no `rejection_reason` column.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentVerificationRequest"
+      responses:
+        "200":
+          description: Updated SupportingDocument
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SupportingDocument"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/photos/{photoId}/file:
+    get:
+      tags: [Admin]
+      summary: Download a student's photo file
+      description: View-only — photos have no verification workflow in this schema (just `is_active`).
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/signatures/{signatureId}/file:
+    get:
+      tags: [Admin]
+      summary: Download a student's signature file
+      description: View-only — signatures have no verification workflow in this schema (just `is_active`).
+      parameters:
+        - $ref: "#/components/parameters/SignatureId"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/course-registrations/{decision}:
+    post:
+      tags: [Admin]
+      summary: Approve or reject one or more course registrations
+      description: Only registrations currently `Submitted` can be decided (409 otherwise).
+      parameters:
+        - name: decision
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [approve, reject]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CourseRegistrationDecisionRequest"
+      responses:
+        "200":
+          description: Updated CourseRegistration rows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CourseRegistration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /admin/reports/summary:
+    get:
+      tags: [Admin]
+      summary: Reporting summary
+      parameters:
+        - name: year
+          in: query
+          description: Defaults to the current calendar year.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Aggregate summary, faculty distribution, and monthly course registrations
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ReportsSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Either a full access token (`{ userId, role, studentId? }`) or a
+        pre-auth token issued mid-login — a pre-auth token is only accepted
+        by the one follow-up endpoint it was issued for.
+
+  parameters:
+    StudentId:
+      name: studentId
+      in: path
+      required: true
+      schema:
+        type: integer
+    BatchId:
+      name: batchId
+      in: path
+      required: true
+      schema:
+        type: integer
+    CorrectionId:
+      name: correctionId
+      in: path
+      required: true
+      schema:
+        type: integer
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: integer
+    PhotoId:
+      name: photoId
+      in: path
+      required: true
+      schema:
+        type: integer
+    SignatureId:
+      name: signatureId
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or expired token; bad credentials
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: Authenticated but not allowed to do this
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: Conflict with current state (e.g. already approved)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ValidationFailed:
+      description: Body/query failed validation
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/ErrorEnvelope"
+              - type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FieldError"
+
+  schemas:
+    SuccessEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+        data:
+          nullable: true
+      required: [success, message, data]
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+        errors:
+          nullable: true
+      required: [success, message]
+
+    FieldError:
+      type: object
+      properties:
+        path:
+          type: string
+          example: email
+        message:
+          type: string
+          example: A valid email is required
+
+    JwtPayload:
+      type: object
+      properties:
+        userId:
+          type: integer
+        role:
+          type: string
+          enum: [student, admin]
+        studentId:
+          type: integer
+          nullable: true
+
+    StudentLoginRequest:
+      type: object
+      required: [regNumber, password]
+      properties:
+        regNumber:
+          type: string
+          example: AGRI-2026-0001
+        password:
+          type: string
+          format: password
+
+    RequiresFirstLoginResult:
+      type: object
+      properties:
+        requiresFirstLogin:
+          type: boolean
+          example: true
+        preAuthToken:
+          type: string
+
+    StudentLoginResult:
+      type: object
+      properties:
+        requiresFirstLogin:
+          type: boolean
+          example: false
+        token:
+          type: string
+        student:
+          $ref: "#/components/schemas/Student"
+
+    FirstLoginRequest:
+      type: object
+      required: [newPassword, confirmPassword]
+      properties:
+        newPassword:
+          type: string
+          format: password
+          minLength: 8
+        confirmPassword:
+          type: string
+          format: password
+          minLength: 8
+
+    TokenResult:
+      type: object
+      properties:
+        token:
+          type: string
+
+    AdminLoginRequest:
+      type: object
+      required: [institutionalEmail, password]
+      properties:
+        institutionalEmail:
+          type: string
+          format: email
+          example: registrar@agri.rjt.ac.lk
+        password:
+          type: string
+          format: password
+
+    RequiresOtpResult:
+      type: object
+      properties:
+        requiresOtp:
+          type: boolean
+          example: true
+        preAuthToken:
+          type: string
+
+    OtpVerifyRequest:
+      type: object
+      required: [otp]
+      properties:
+        otp:
+          type: string
+          minLength: 6
+          maxLength: 6
+          example: "123456"
+
+    CurrentStatus:
+      type: string
+      enum: [Prospective, Registered, Graduated, Released]
+
+    AccountStatus:
+      type: string
+      enum: [Active, Inactive, Suspended]
+
+    Faculty:
+      type: object
+      properties:
+        faculty_id:
+          type: integer
+        faculty_name:
+          type: string
+
+    Programme:
+      type: object
+      properties:
+        programme_id:
+          type: integer
+        programme_code:
+          type: string
+        programme_name:
+          type: string
+        Faculty:
+          $ref: "#/components/schemas/Faculty"
+
+    Intake:
+      type: object
+      properties:
+        intake_id:
+          type: integer
+        intake_code:
+          type: string
+        intake_year:
+          type: integer
+        description:
+          type: string
+          nullable: true
+
+    Student:
+      type: object
+      properties:
+        student_id:
+          type: integer
+        reg_number:
+          type: string
+          example: AGRI-2026-0001
+        full_name:
+          type: string
+        nic:
+          type: string
+        account_status:
+          $ref: "#/components/schemas/AccountStatus"
+        current_status:
+          $ref: "#/components/schemas/CurrentStatus"
+        Programme:
+          $ref: "#/components/schemas/Programme"
+        Intake:
+          $ref: "#/components/schemas/Intake"
+
+    Gender:
+      type: string
+      enum: [Male, Female, Other]
+
+    StudentProfile:
+      type: object
+      properties:
+        profile_id:
+          type: integer
+        student_id:
+          type: integer
+        address:
+          type: string
+          nullable: true
+        contact_no:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        date_of_birth:
+          type: string
+          format: date
+          nullable: true
+        gender:
+          allOf:
+            - $ref: "#/components/schemas/Gender"
+          nullable: true
+        family_info:
+          type: string
+          nullable: true
+        emergency_contact:
+          type: string
+          nullable: true
+        other_details:
+          type: string
+          nullable: true
+        profile_completion_pct:
+          type: number
+          format: float
+          example: 70.0
+
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        address:
+          type: string
+        contact_no:
+          type: string
+        email:
+          type: string
+          format: email
+        date_of_birth:
+          type: string
+          format: date
+        gender:
+          $ref: "#/components/schemas/Gender"
+        family_info:
+          type: string
+        emergency_contact:
+          type: string
+        other_details:
+          type: string
+
+    ProfilePhotograph:
+      type: object
+      properties:
+        photo_id:
+          type: integer
+        student_id:
+          type: integer
+        file_path:
+          type: string
+        uploaded_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+
+    Signature:
+      type: object
+      properties:
+        signature_id:
+          type: integer
+        student_id:
+          type: integer
+        file_path:
+          type: string
+        uploaded_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+
+    DocType:
+      type: string
+      enum: [NIC Copy, Birth Certificate, Admission Letter, Medical Certificate, School Certificate, Other]
+
+    SupportingDocument:
+      type: object
+      properties:
+        document_id:
+          type: integer
+        student_id:
+          type: integer
+        doc_type:
+          $ref: "#/components/schemas/DocType"
+        file_path:
+          type: string
+        uploaded_at:
+          type: string
+          format: date-time
+        is_verified:
+          type: boolean
+        verified_by:
+          type: integer
+          nullable: true
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    StudentProfileSnapshot:
+      type: object
+      properties:
+        student:
+          $ref: "#/components/schemas/Student"
+        profile:
+          $ref: "#/components/schemas/StudentProfile"
+        photo:
+          allOf:
+            - $ref: "#/components/schemas/ProfilePhotograph"
+          nullable: true
+        signature:
+          allOf:
+            - $ref: "#/components/schemas/Signature"
+          nullable: true
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupportingDocument"
+
+    Course:
+      type: object
+      properties:
+        course_id:
+          type: integer
+        course_code:
+          type: string
+          example: AGRI201
+        course_name:
+          type: string
+        credits:
+          type: integer
+        is_elective:
+          type: boolean
+
+    CourseRegistrationRequest:
+      type: object
+      required: [semesterId, courseIds]
+      properties:
+        semesterId:
+          type: integer
+        courseIds:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+
+    CourseRegistrationStatus:
+      type: string
+      enum: [Draft, Submitted, Approved, Rejected]
+
+    CourseRegistrationItem:
+      type: object
+      properties:
+        item_id:
+          type: integer
+        registration_id:
+          type: integer
+        course_id:
+          type: integer
+        is_compulsory:
+          type: boolean
+        is_elective:
+          type: boolean
+        selected_at:
+          type: string
+          format: date-time
+        Course:
+          $ref: "#/components/schemas/Course"
+
+    CourseRegistration:
+      type: object
+      properties:
+        registration_id:
+          type: integer
+        student_id:
+          type: integer
+        semester_id:
+          type: integer
+        registration_date:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/CourseRegistrationStatus"
+        CourseRegistrationItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/CourseRegistrationItem"
+
+    ApprovalDecisionRequest:
+      type: object
+      required: [studentIds]
+      properties:
+        studentIds:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+        reason:
+          type: string
+          description: Optional; used for the rejection audit trail.
+
+    UserAccountSummary:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [Active, Inactive, Locked]
+
+    ApprovalResult:
+      type: object
+      properties:
+        studentId:
+          type: integer
+        success:
+          type: boolean
+        data:
+          type: object
+          description: Present only when success is true.
+          properties:
+            student:
+              $ref: "#/components/schemas/Student"
+            account:
+              $ref: "#/components/schemas/UserAccountSummary"
+            tempPassword:
+              type: string
+              description: >
+                One-time plaintext value, present only on a successful
+                approve — never fetchable again after this response.
+        error:
+          type: string
+          description: Present only when success is false.
+
+    ImportBatch:
+      type: object
+      properties:
+        batch_id:
+          type: integer
+        file_name:
+          type: string
+        total_records:
+          type: integer
+        valid_records:
+          type: integer
+        invalid_records:
+          type: integer
+        status:
+          type: string
+          enum: [Processing, Completed, Failed]
+
+    ValidationStatus:
+      type: string
+      enum: [Valid, Warning, Error]
+
+    ImportRow:
+      type: object
+      properties:
+        row_number:
+          type: integer
+        reg_number:
+          type: string
+          nullable: true
+        full_name:
+          type: string
+          nullable: true
+        nic:
+          type: string
+          nullable: true
+        validation_status:
+          $ref: "#/components/schemas/ValidationStatus"
+        message:
+          type: string
+          nullable: true
+        student_id:
+          type: integer
+          nullable: true
+
+    ImportResult:
+      type: object
+      properties:
+        batch:
+          $ref: "#/components/schemas/ImportBatch"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportRow"
+
+    CorrectionRequestBody:
+      type: object
+      properties:
+        justification:
+          type: string
+
+    CorrectionStatus:
+      type: string
+      enum: [Pending, Approved, Rejected, Completed]
+
+    CorrectionRequest:
+      type: object
+      properties:
+        correction_id:
+          type: integer
+        batch_id:
+          type: integer
+        requested_by:
+          type: integer
+        requested_at:
+          type: string
+          format: date-time
+        justification:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/CorrectionStatus"
+
+    CorrectionDecisionRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [Approved, Rejected, Completed]
+
+    DocumentVerificationRequest:
+      type: object
+      required: [isVerified]
+      properties:
+        isVerified:
+          type: boolean
+        reason:
+          type: string
+          description: Written to the audit log only when isVerified is false.
+
+    CourseRegistrationDecisionRequest:
+      type: object
+      required: [registrationIds]
+      properties:
+        registrationIds:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+
+    ReportsSummary:
+      type: object
+      properties:
+        summary:
+          type: object
+          properties:
+            students:
+              type: integer
+            registeredStudents:
+              type: integer
+            intakes:
+              type: integer
+            courseRegistrations:
+              type: integer
+            programmes:
+              type: integer
+        facultyDistribution:
+          type: array
+          items:
+            type: object
+            properties:
+              faculty:
+                type: string
+              count:
+                type: integer
+        monthlyCourseRegistrations:
+          type: array
+          items:
+            type: object
+            properties:
+              month:
+                type: integer
+                minimum: 1
+                maximum: 12
+              count:
+                type: integer

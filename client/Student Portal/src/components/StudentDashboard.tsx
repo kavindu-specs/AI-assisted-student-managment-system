@@ -1,12 +1,11 @@
 
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   BellRingIcon,
   BookOpenIcon,
   CalendarDaysIcon,
   CheckCircle2Icon,
-  CircleAlertIcon,
   Clock3Icon,
   FileTextIcon,
   GraduationCapIcon,
@@ -15,38 +14,77 @@ import {
   ShieldCheckIcon,
   UserRoundIcon } from
 'lucide-react';
+import { useStudentWorkflow } from '../StudentWorkflow';
+
+type JourneyState = 'complete' | 'current' | 'pending';
 
 type JourneyStage = {
   label: string;
   status: string;
   icon: React.ComponentType<{className?: string;strokeWidth?: number;}>;
-  state: 'complete' | 'current' | 'pending';
+  state: JourneyState;
 };
 
-const JOURNEY: JourneyStage[] = [
-{ label: 'Profile Completed', status: 'Completed', icon: UserRoundIcon, state: 'complete' },
-{ label: 'Documents Uploaded', status: 'Completed', icon: FileTextIcon, state: 'complete' },
-{ label: 'Verification', status: 'In Progress', icon: Clock3Icon, state: 'current' },
-{ label: 'Registration Approved', status: 'Pending', icon: ShieldCheckIcon, state: 'pending' },
-{ label: 'Course Registration', status: 'Pending', icon: BookOpenIcon, state: 'pending' }];
-
-
-const DETAILS = [
-['Registration Number', 'RUSL/AG/2026/0081', FileTextIcon],
-['Programme', 'BSc Hons (Agriculture)', GraduationCapIcon],
-['Faculty', 'Faculty of Agriculture', LandmarkIcon],
-['Academic Year', '2026/2027', CalendarDaysIcon],
-['Semester', 'Semester 1', CalendarDaysIcon]] as
-const;
-
-const NOTIFICATIONS = [
-{ text: 'Your profile has been verified', time: '2 hours ago', icon: CheckCircle2Icon, className: 'bg-emerald-100 text-emerald-600' },
-{ text: 'Please upload your Birth Certificate', time: '5 hours ago', icon: FileTextIcon, className: 'bg-gold/20 text-maroon' },
-{ text: 'Course registration will open on 15 May 2026', time: '1 day ago', icon: BellRingIcon, className: 'bg-maroon/10 text-maroon' },
-{ text: 'Orientation program on 20 May 2026', time: '2 days ago', icon: InfoIcon, className: 'bg-sky-100 text-sky-600' }] as
-const;
-
 export function StudentDashboard() {
+  const { profileSnapshot, refresh } = useStudentWorkflow();
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const student = profileSnapshot?.student;
+  const profile = profileSnapshot?.profile;
+  const documents = profileSnapshot?.documents ?? [];
+  const pct = Number(profile?.profile_completion_pct ?? 0);
+  const currentStatus = student?.current_status;
+  const registered = currentStatus === 'Registered' || currentStatus === 'Graduated' || currentStatus === 'Released';
+
+  // Same coarse mapping as RegistrationStatus.tsx, condensed to the 5 stages
+  // this summary strip shows.
+  const JOURNEY: JourneyStage[] = [
+    { label: 'Profile Completed', status: pct >= 100 ? 'Completed' : pct > 0 ? 'In Progress' : 'Pending', icon: UserRoundIcon, state: pct >= 100 ? 'complete' : pct > 0 ? 'current' : 'pending' },
+    { label: 'Documents Uploaded', status: documents.length > 0 ? 'Completed' : 'Pending', icon: FileTextIcon, state: documents.length > 0 ? 'complete' : pct >= 100 ? 'current' : 'pending' },
+    { label: 'Verification', status: currentStatus === 'Prospective' ? 'In Progress' : registered ? 'Completed' : 'Pending', icon: Clock3Icon, state: pct < 100 ? 'pending' : currentStatus === 'Prospective' ? 'current' : 'complete' },
+    { label: 'Registration Approved', status: registered ? 'Completed' : 'Pending', icon: ShieldCheckIcon, state: registered ? 'complete' : 'pending' },
+    { label: 'Course Registration', status: registered ? 'Available' : 'Pending', icon: BookOpenIcon, state: registered ? 'complete' : 'pending' },
+  ];
+
+  // The API has no student-facing notifications endpoint, so this feed is
+  // derived from real profile/document state rather than a fabricated list.
+  const activity: Array<{ text: string; icon: React.ComponentType<{className?: string;strokeWidth?: number;}>; className: string }> = [];
+  if (currentStatus === 'Prospective' && pct >= 100) {
+    activity.push({ text: 'Your profile is complete and awaiting verification', icon: Clock3Icon, className: 'bg-gold/20 text-maroon' });
+  } else if (currentStatus === 'Prospective') {
+    activity.push({ text: `Your profile is ${Math.round(pct)}% complete - finish it to submit for verification`, icon: InfoIcon, className: 'bg-sky-100 text-sky-600' });
+  }
+  if (registered) {
+    activity.push({ text: 'Your registration has been approved - you can register for courses', icon: CheckCircle2Icon, className: 'bg-emerald-100 text-emerald-600' });
+  }
+  const verifiedCount = documents.filter((doc) => doc.is_verified).length;
+  const pendingCount = documents.length - verifiedCount;
+  if (verifiedCount > 0) {
+    activity.push({ text: `${verifiedCount} document${verifiedCount === 1 ? '' : 's'} verified by the university`, icon: CheckCircle2Icon, className: 'bg-emerald-100 text-emerald-600' });
+  }
+  if (pendingCount > 0) {
+    activity.push({ text: `${pendingCount} document${pendingCount === 1 ? '' : 's'} awaiting verification`, icon: BellRingIcon, className: 'bg-maroon/10 text-maroon' });
+  }
+  if (activity.length === 0) {
+    activity.push({ text: 'No recent activity yet - start by completing your profile', icon: InfoIcon, className: 'bg-sky-100 text-sky-600' });
+  }
+
+  const completedCount = JOURNEY.filter((stage) => stage.state === 'complete').length;
+  const currentCount = JOURNEY.filter((stage) => stage.state === 'current').length;
+  const pendingStageCount = JOURNEY.length - completedCount - currentCount;
+  const overallPct = Math.round(completedCount / JOURNEY.length * 100);
+
+  const DETAILS: Array<[string, string, React.ComponentType<{className?: string;strokeWidth?: number;}>]> = [
+    ['Registration Number', student?.reg_number ?? '—', FileTextIcon],
+    ['Programme', student?.Programme?.programme_name ?? '—', GraduationCapIcon],
+    ['Faculty', student?.Programme?.Faculty?.faculty_name ?? '—', LandmarkIcon],
+    ['Intake', student?.Intake?.intake_year ? String(student.Intake.intake_year) : '—', CalendarDaysIcon],
+  ];
+
   return (
     <main className="min-h-0 flex-1 overflow-hidden px-5 py-5 sm:px-8 lg:px-9 lg:py-6">
       <div className="mx-auto flex h-full max-w-[1440px] flex-col">
@@ -70,7 +108,7 @@ export function StudentDashboard() {
           </div>
         </section>
 
-        <section aria-label="Academic information" className="mt-4 grid shrink-0 grid-cols-2 overflow-hidden rounded-lg border border-slate-200 bg-white lg:grid-cols-6">
+        <section aria-label="Academic information" className="mt-4 grid shrink-0 grid-cols-2 overflow-hidden rounded-lg border border-slate-200 bg-white lg:grid-cols-5">
           {DETAILS.map(([label, value, Icon]) =>
           <div key={label} className="flex min-h-[78px] items-center gap-3 border-b border-r border-slate-100 px-4 last:border-r-0 lg:border-b-0">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-maroon/8 text-maroon"><Icon className="h-4 w-4" strokeWidth={1.7} /></span>
@@ -79,7 +117,7 @@ export function StudentDashboard() {
           )}
           <div className="flex min-h-[78px] items-center gap-3 px-4">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gold/25 text-maroon"><ShieldCheckIcon className="h-4 w-4" strokeWidth={1.7} /></span>
-            <div><p className="text-[10px] font-medium text-slate-500">Registration Status</p><p className="mt-1 text-[10px] font-bold text-maroon">• Verification in Progress</p></div>
+            <div><p className="text-[10px] font-medium text-slate-500">Registration Status</p><p className="mt-1 text-[10px] font-bold text-maroon">• {currentStatus ?? 'Loading…'}</p></div>
           </div>
         </section>
 
@@ -87,21 +125,21 @@ export function StudentDashboard() {
           <article className="rounded-lg border border-slate-200 bg-white p-5">
             <h2 className="text-sm font-bold text-slate-800">My Registration Progress</h2>
             <div className="mt-5 flex items-center gap-8">
-              <div className="relative flex h-32 w-32 shrink-0 items-center justify-center rounded-full" style={{ background: 'conic-gradient(#7A1F2B 0deg 144deg, #F2C94C 144deg 216deg, #e5e7eb 216deg 360deg)' }}>
-                <div className="flex h-[104px] w-[104px] flex-col items-center justify-center rounded-full bg-white"><span className="text-2xl font-extrabold text-maroon">60%</span><span className="mt-1 text-[10px] font-medium text-slate-500">Overall Progress</span></div>
+              <div className="relative flex h-32 w-32 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(#7A1F2B 0deg ${overallPct * 3.6}deg, #F2C94C ${overallPct * 3.6}deg ${(overallPct + currentCount / JOURNEY.length * 100) * 3.6}deg, #e5e7eb ${(overallPct + currentCount / JOURNEY.length * 100) * 3.6}deg 360deg)` }}>
+                <div className="flex h-[104px] w-[104px] flex-col items-center justify-center rounded-full bg-white"><span className="text-2xl font-extrabold text-maroon">{overallPct}%</span><span className="mt-1 text-[10px] font-medium text-slate-500">Overall Progress</span></div>
               </div>
               <dl className="space-y-4 text-xs">
-                <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-maroon" /><dt className="text-slate-600">Completed</dt><dd className="ml-auto font-bold text-slate-700">3/6</dd></div>
-                <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-gold" /><dt className="text-slate-600">In Progress</dt><dd className="ml-auto font-bold text-slate-700">1/6</dd></div>
-                <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" /><dt className="text-slate-600">Pending</dt><dd className="ml-auto font-bold text-slate-700">2/6</dd></div>
+                <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-maroon" /><dt className="text-slate-600">Completed</dt><dd className="ml-auto font-bold text-slate-700">{completedCount}/{JOURNEY.length}</dd></div>
+                <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-gold" /><dt className="text-slate-600">In Progress</dt><dd className="ml-auto font-bold text-slate-700">{currentCount}/{JOURNEY.length}</dd></div>
+                <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" /><dt className="text-slate-600">Pending</dt><dd className="ml-auto font-bold text-slate-700">{pendingStageCount}/{JOURNEY.length}</dd></div>
               </dl>
             </div>
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-white">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><h2 className="text-sm font-bold text-slate-800">Recent Notifications</h2><button type="button" className="text-xs font-bold text-maroon hover:text-maroon-deep focus:outline-none focus:ring-2 focus:ring-maroon/20">View All</button></div>
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><h2 className="text-sm font-bold text-slate-800">Recent Activity</h2></div>
             <ul className="divide-y divide-slate-100">
-              {NOTIFICATIONS.map(({ text, time, icon: Icon, className }) => <li key={text} className="flex items-center gap-3 px-5 py-3"><span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${className}`}><Icon className="h-3.5 w-3.5" /></span><span className="min-w-0 flex-1 text-xs font-semibold text-slate-700">{text}</span><time className="shrink-0 text-[10px] text-slate-400">{time}</time></li>)}
+              {activity.map(({ text, icon: Icon, className }) => <li key={text} className="flex items-center gap-3 px-5 py-3"><span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${className}`}><Icon className="h-3.5 w-3.5" /></span><span className="min-w-0 flex-1 text-xs font-semibold text-slate-700">{text}</span></li>)}
             </ul>
           </article>
         </section>

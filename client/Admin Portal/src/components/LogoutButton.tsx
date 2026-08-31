@@ -2,11 +2,14 @@
 import React from 'react';
 import { LogOutIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { clearToken } from '../lib/apiClient';
 
 export function LogoutButton() {
   const navigate = useNavigate();
 
   const handleLogout = () => {
+    clearToken();
+    sessionStorage.removeItem('rms-admin-authenticated');
     navigate('/', { replace: true });
   };
 

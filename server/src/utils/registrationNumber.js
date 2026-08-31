@@ -1,20 +1,20 @@
-const { Student } = require('../models');
 const { Op } = require('sequelize');
+const { Student } = require('../models');
 
 /**
- * Format: <FACULTY_CODE>/<ADMISSION_YEAR>/<4-digit sequence>
- * e.g. AG/2026/0081
+ * Format: <PROGRAMME_CODE>-<INTAKE_YEAR>-<4-digit sequence>
+ * e.g. AGRI-2026-0001
  */
-async function generateRegistrationNo(facultyCode, admissionYear) {
-  const prefix = `${facultyCode}/${admissionYear}/`;
+async function generateRegistrationNo(programmeCode, intakeYear) {
+  const prefix = `${programmeCode}-${intakeYear}-`;
   const last = await Student.findOne({
-    where: { registration_no: { [Op.like]: `${prefix}%` } },
-    order: [['registration_no', 'DESC']],
+    where: { reg_number: { [Op.like]: `${prefix}%` } },
+    order: [['reg_number', 'DESC']],
   });
 
   let nextSeq = 1;
-  if (last && last.registration_no) {
-    const parts = last.registration_no.split('/');
+  if (last && last.reg_number) {
+    const parts = last.reg_number.split('-');
     const lastSeq = parseInt(parts[parts.length - 1], 10);
     if (!Number.isNaN(lastSeq)) nextSeq = lastSeq + 1;
   }

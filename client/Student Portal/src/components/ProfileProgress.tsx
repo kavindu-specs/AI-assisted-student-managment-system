@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { CheckIcon, FileUpIcon, PhoneIcon, UserRoundIcon, UsersRoundIcon } from 'lucide-react';
+import { useStudentWorkflow } from '../StudentWorkflow';
 
 type ProfileProgressProps = {
   currentStep?: number;
@@ -22,9 +23,19 @@ const STEPS: Step[] = [
 
 export function ProfileProgress({ currentStep = 1 }: ProfileProgressProps) {
   const progressWidth = `${(currentStep - 1) / (STEPS.length - 1) * 100}%`;
+  const { profileSnapshot } = useStudentWorkflow();
+  const backendPct = profileSnapshot ? Math.round(Number(profileSnapshot.profile.profile_completion_pct)) : null;
 
   return (
     <section aria-label="Profile completion steps" className="mt-7 hidden lg:block">
+      {backendPct !== null && (
+        // The per-step "20% / 40% / ..." labels below just mark wizard
+        // position - this line surfaces the real, backend-computed
+        // profile_completion_pct so it isn't lost from this view.
+        <p className="mb-3 text-right text-[11px] font-semibold text-slate-500">
+          Profile completion (server): <span className="text-maroon">{backendPct}%</span>
+        </p>
+      )}
       <div className="relative flex items-start justify-between">
         <span className="absolute left-0 right-0 top-5 h-0.5 bg-slate-200" />
         <span className="absolute left-0 top-5 h-0.5 bg-gold transition-all duration-300" style={{ width: progressWidth }} />

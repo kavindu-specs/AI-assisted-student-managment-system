@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeftIcon,
@@ -7,24 +7,21 @@ import {
   BellIcon,
   BookOpenIcon,
   CheckCircle2Icon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ClipboardListIcon,
   CopyIcon,
   DownloadIcon,
   HelpCircleIcon,
   InfoIcon,
-  KeyRoundIcon,
   LayoutDashboardIcon,
   LockKeyholeIcon,
   MailIcon,
   MenuIcon,
-  SendIcon,
   SettingsIcon,
   UserRoundPlusIcon,
   UsersIcon } from
 'lucide-react';
 import { LogoutButton } from '../components/LogoutButton';
+import { getApprovalResults } from '../lib/registrationStore';
 
 type Account = {
   registration: string;
@@ -33,15 +30,6 @@ type Account = {
   password: string;
   email: string;
 };
-
-const accounts: Account[] = [
-{ registration: 'RUSL/AG/2026/0001', name: 'Dissanayake, Tharindu', username: 'ag20260001', password: 'X7k@8Lm3', email: 'tharindu.d@agri.rjt.ac.lk' },
-{ registration: 'RUSL/AG/2026/0002', name: 'Perera, Nimesh', username: 'ag20260002', password: 'P9m#2Qw8', email: 'nimesh.p@agri.rjt.ac.lk' },
-{ registration: 'RUSL/AG/2026/0003', name: 'Fernando, Pasindu', username: 'ag20260003', password: 'B6v$4Rt9', email: 'pasindu.f@agri.rjt.ac.lk' },
-{ registration: 'RUSL/AG/2026/0004', name: 'Silva, Kavindi', username: 'ag20260004', password: 'K3n%5Ty2', email: 'kavindi.s@agri.rjt.ac.lk' },
-{ registration: 'RUSL/AG/2026/0005', name: 'Jayawardena, Hasini', username: 'ag20260005', password: 'Z8t^7Gh1', email: 'hasini.j@agri.rjt.ac.lk' },
-{ registration: 'RUSL/AG/2026/0006', name: 'Wijesinghe, Sachith', username: 'ag20260006', password: 'M2q*9Lp7', email: 'sachith.w@agri.rjt.ac.lk' }];
-
 
 const navigationItems = [
 { label: 'Dashboard', icon: LayoutDashboardIcon, to: '/dashboard' },
@@ -56,6 +44,19 @@ export function AccountCreationPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const navigate = useNavigate();
+
+  const accounts: Account[] = useMemo(() => getApprovalResults()
+    .filter((result) => result.success && result.data)
+    .map((result) => {
+      const { student, account, tempPassword } = result.data!;
+      return {
+        registration: student.reg_number,
+        name: student.full_name,
+        username: account.username,
+        password: tempPassword,
+        email: account.email
+      };
+    }), []);
 
   const copyToClipboard = async (value: string, label: string) => {
     try {
@@ -94,10 +95,11 @@ export function AccountCreationPage() {
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7 sm:py-7"><div className="mx-auto max-w-[1360px] space-y-4">
           <ol className="mb-6 hidden items-center justify-between gap-3 xl:flex" aria-label="Registration flow"><ProgressStep number="1" label="Configure" /><ProgressStep number="2" label="Upload File" /><ProgressStep number="3" label="Validate" /><ProgressStep number="4" label="Review & Approval" /><ProgressStep number="5" label="Account Creation" active /></ol>
           {notice && <div role="status" className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><span>{notice}</span><button type="button" onClick={() => setNotice('')} className="font-bold">Dismiss</button></div>}
-          <section className="flex items-center gap-4 rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-emerald-500 bg-white text-emerald-600"><CheckCircle2Icon className="h-6 w-6" /></span><div><h2 className="font-bold text-emerald-800">Accounts Created Successfully!</h2><p className="mt-1 text-sm text-emerald-700">141 Faculty of Agriculture student accounts have been created automatically.</p></div></section>
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5" aria-label="Account creation summary"><CreationMetric icon={UserRoundPlusIcon} iconClass="bg-emerald-100 text-emerald-600" label="Total Accounts Created" value="141" /><CreationMetric icon={UsersIcon} iconClass="bg-maroon/10 text-maroon" label="Usernames Generated" value="141" /><CreationMetric icon={LockKeyholeIcon} iconClass="bg-gold/20 text-amber-700" label="Temporary Passwords Generated" value="141" /><CreationMetric icon={MailIcon} iconClass="bg-violet-100 text-violet-600" label="Emails Available" value="136" detail="96.5%" /><CreationMetric icon={CheckCircle2Icon} iconClass="bg-emerald-100 text-emerald-600" label="Registration Status" value="Completed" compact /></section>
-          <section className="overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left"><thead className="border-b border-stone-200 bg-stone-50 text-[10px] uppercase tracking-[0.07em] text-slate-500"><tr><th className="px-4 py-4">Registration No.</th><th className="px-4 py-4">Student Name</th><th className="px-4 py-4">Username (Generated)</th><th className="px-4 py-4">Temporary Password (Generated)</th><th className="px-4 py-4">Student Email</th><th className="px-4 py-4">Status</th></tr></thead><tbody className="divide-y divide-stone-100">{accounts.map((account) => <AccountRow key={account.registration} account={account} onCopy={copyToClipboard} />)}</tbody></table></div><div className="flex items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 text-xs text-slate-500"><p>Showing 1 to 6 of 141 agriculture accounts</p><Pagination /></div></section>
-          <section className="flex flex-col gap-3 sm:flex-row"><div className="flex flex-1 items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800"><InfoIcon className="h-4 w-4 shrink-0" /> Temporary passwords are valid for 7 days.</div><div className="flex flex-col gap-3 sm:flex-row"><button type="button" onClick={() => setNotice('Credentials are queued for delivery to all available student email addresses.')} className="flex items-center justify-center gap-2 rounded-md border border-maroon px-4 py-3 text-sm font-bold text-maroon hover:bg-maroon/5"><SendIcon className="h-4 w-4" /> Send Credentials</button><button type="button" onClick={downloadList} className="flex items-center justify-center gap-2 rounded-md border border-maroon px-4 py-3 text-sm font-bold text-maroon hover:bg-maroon/5"><DownloadIcon className="h-4 w-4" /> Download List</button><button type="button" onClick={() => navigate('/documents')} className="flex items-center justify-center gap-2 rounded-md bg-maroon px-5 py-3 text-sm font-bold text-white hover:bg-maroon-light"><CheckCircle2Icon className="h-4 w-4" /> Student Documents</button></div></section>
+          {!accounts.length && <div role="alert" className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><InfoIcon className="h-4 w-4 shrink-0" /> No newly approved accounts found for this session. <Link to="/approval" className="font-bold underline">Approve students</Link> to see their credentials here — a temporary password can only be shown once, right after approval.</div>}
+          {Boolean(accounts.length) && <section className="flex items-center gap-4 rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-emerald-500 bg-white text-emerald-600"><CheckCircle2Icon className="h-6 w-6" /></span><div><h2 className="font-bold text-emerald-800">Accounts Created Successfully!</h2><p className="mt-1 text-sm text-emerald-700">{accounts.length} student account{accounts.length === 1 ? '' : 's'} approved and activated in this session.</p></div></section>}
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Account creation summary"><CreationMetric icon={UserRoundPlusIcon} iconClass="bg-emerald-100 text-emerald-600" label="Accounts Created" value={String(accounts.length)} /><CreationMetric icon={UsersIcon} iconClass="bg-maroon/10 text-maroon" label="Usernames Generated" value={String(accounts.length)} /><CreationMetric icon={LockKeyholeIcon} iconClass="bg-gold/20 text-amber-700" label="Temporary Passwords Generated" value={String(accounts.length)} /><CreationMetric icon={CheckCircle2Icon} iconClass="bg-emerald-100 text-emerald-600" label="Registration Status" value={accounts.length ? 'Completed' : 'None yet'} compact /></section>
+          <section className="overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left"><thead className="border-b border-stone-200 bg-stone-50 text-[10px] uppercase tracking-[0.07em] text-slate-500"><tr><th className="px-4 py-4">Registration No.</th><th className="px-4 py-4">Student Name</th><th className="px-4 py-4">Username (Generated)</th><th className="px-4 py-4">Temporary Password (Generated)</th><th className="px-4 py-4">Student Email</th><th className="px-4 py-4">Status</th></tr></thead><tbody className="divide-y divide-stone-100">{accounts.map((account) => <AccountRow key={account.registration} account={account} onCopy={copyToClipboard} />)}{!accounts.length && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-500">No accounts to show.</td></tr>}</tbody></table></div><div className="flex items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 text-xs text-slate-500"><p>Showing {accounts.length} account{accounts.length === 1 ? '' : 's'} created in this session</p></div></section>
+          <section className="flex flex-col gap-3 sm:flex-row"><div className="flex flex-1 items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800"><InfoIcon className="h-4 w-4 shrink-0" /> Temporary passwords are shown once, right here — the server does not store or re-serve them. Credentials are already emailed automatically by the server when approved (if SMTP is configured).</div><div className="flex flex-col gap-3 sm:flex-row"><button type="button" onClick={() => setNotice('Credentials were already emailed automatically by the server at approval time (if SMTP is configured) — this does not resend them.')} className="flex items-center justify-center gap-2 rounded-md border border-maroon px-4 py-3 text-sm font-bold text-maroon hover:bg-maroon/5"><MailIcon className="h-4 w-4" /> Credentials Already Sent</button><button type="button" disabled={!accounts.length} onClick={downloadList} className="flex items-center justify-center gap-2 rounded-md border border-maroon px-4 py-3 text-sm font-bold text-maroon hover:bg-maroon/5 disabled:cursor-not-allowed disabled:opacity-50"><DownloadIcon className="h-4 w-4" /> Download List</button><button type="button" onClick={() => navigate('/documents')} className="flex items-center justify-center gap-2 rounded-md bg-maroon px-5 py-3 text-sm font-bold text-white hover:bg-maroon-light"><CheckCircle2Icon className="h-4 w-4" /> Student Documents</button></div></section>
         </div></div>
       </main>
       <button type="button" aria-label="Help" className="fixed bottom-4 right-4 flex h-10 w-10 items-center justify-center rounded-full bg-maroon text-white shadow-lg hover:bg-maroon-light"><HelpCircleIcon className="h-5 w-5" /></button>
@@ -115,10 +117,6 @@ function AccountRow({ account, onCopy }: {account: Account;onCopy: (value: strin
 
 function CopyField({ label, value, onCopy }: {label: string;value: string;onCopy: (value: string, label: string) => void;}) {
   return <span className="flex items-center gap-2 whitespace-nowrap"><span>{value}</span><button type="button" aria-label={`Copy ${label}`} onClick={() => onCopy(value, label)} className="rounded p-1 text-slate-400 hover:bg-stone-100 hover:text-maroon"><CopyIcon className="h-3.5 w-3.5" /></button></span>;
-}
-
-function Pagination() {
-  return <div className="flex items-center gap-1"><button className="rounded border border-stone-200 p-1 text-slate-400" aria-label="Previous page"><ChevronLeftIcon className="h-4 w-4" /></button><span className="rounded bg-maroon px-2.5 py-1 font-bold text-white">1</span><button className="rounded px-2 py-1 hover:text-maroon">2</button><button className="rounded px-2 py-1 hover:text-maroon">3</button><span>…</span><button className="rounded px-2 py-1 hover:text-maroon">189</button><button className="rounded border border-stone-200 p-1" aria-label="Next page"><ChevronRightIcon className="h-4 w-4" /></button></div>;
 }
 
 function ProgressStep({ number, label, active = false }: {number: string;label: string;active?: boolean;}) {

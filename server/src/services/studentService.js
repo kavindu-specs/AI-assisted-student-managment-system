@@ -1,16 +1,13 @@
 const {
-  Student, StudentProfile, StudentMedia, StudentDocument, Programme, Department, Faculty, Intake,
+  Student, StudentProfile, ProfilePhotograph, Signature, SupportingDocument, Programme, Faculty, Intake,
 } = require('../models');
 const AppError = require('../utils/AppError');
 const storageService = require('./storageService');
-const { PROFILE_COMPLETION_STATUS } = require('../config/constants');
+const { calculateCompletionPct } = require('../utils/profileCompletion');
 
 async function findStudentOrThrow(studentId) {
   const student = await Student.findByPk(studentId, {
-    include: [
-      { model: Programme, include: [{ model: Department, include: [Faculty] }] },
-      Intake,
-    ],
+    include: [{ model: Programme, include: [Faculty] }, Intake],
   });
   if (!student) throw new AppError('Student not found', 404);
   return student;
@@ -24,107 +21,96 @@ async function getOrCreateProfile(studentId) {
   return profile;
 }
 
-function computeCompletionStatus(profile, documentCount) {
-  const contactFilled = Boolean(profile.address_line_1 && profile.district && profile.mobile_phone);
-  const guardianFilled = Boolean(profile.guardian_name && profile.guardian_phone);
-  const emergencyFilled = Boolean(profile.emergency_contact);
-
-  if (contactFilled && guardianFilled && emergencyFilled && documentCount > 0) {
-    return PROFILE_COMPLETION_STATUS.COMPLETED;
-  }
-  if (contactFilled || guardianFilled || emergencyFilled || documentCount > 0) {
-    return PROFILE_COMPLETION_STATUS.IN_PROGRESS;
-  }
-  return PROFILE_COMPLETION_STATUS.NOT_STARTED;
-}
-
-async function refreshCompletionStatus(studentId) {
+async function refreshCompletionPct(studentId) {
   const profile = await getOrCreateProfile(studentId);
-  const documentCount = await StudentDocument.count({ where: { student_id: studentId } });
-  const status = computeCompletionStatus(profile, documentCount);
-  await profile.update({ profile_completion_status: status });
+  const [hasPhoto, hasSignature, documentCount] = await Promise.all([
+    ProfilePhotograph.count({ where: { student_id: studentId, is_active: true } }),
+    Signature.count({ where: { student_id: studentId, is_active: true } }),
+    SupportingDocument.count({ where: { student_id: studentId } }),
+  ]);
+
+  const pct = calculateCompletionPct(profile, {
+    hasPhoto: hasPhoto > 0,
+    hasSignature: hasSignature > 0,
+    hasDocument: documentCount > 0,
+  });
+  await profile.update({ profile_completion_pct: pct });
   return profile;
 }
 
 async function getFullProfile(studentId) {
   const student = await findStudentOrThrow(studentId);
   const profile = await getOrCreateProfile(studentId);
-  const media = await StudentMedia.findAll({ where: { student_id: studentId, is_current: true } });
-  const documents = await StudentDocument.findAll({ where: { student_id: studentId } });
-  return { student, profile, media, documents };
+  const [photo] = await ProfilePhotograph.findAll({ where: { student_id: studentId, is_active: true } });
+  const [signature] = await Signature.findAll({ where: { student_id: studentId, is_active: true } });
+  const documents = await SupportingDocument.findAll({ where: { student_id: studentId } });
+  return {
+    student, profile, photo: photo || null, signature: signature || null, documents,
+  };
 }
 
-async function updatePersonalDetails(studentId, data) {
-  const student = await findStudentOrThrow(studentId);
-  const allowed = ['full_name', 'name_with_initials', 'date_of_birth', 'gender'];
-  const updates = {};
-  allowed.forEach((key) => {
-    if (data[key] !== undefined) updates[key] = data[key];
-  });
-  await student.update(updates);
-  return student;
-}
-
-async function updateContactAndFamilyInfo(studentId, data) {
+async function updateProfile(studentId, data) {
   const profile = await getOrCreateProfile(studentId);
   const allowed = [
-    'address_line_1', 'address_line_2', 'district', 'gs_division', 'electorate',
-    'mobile_phone', 'land_phone', 'email',
-    'guardian_name', 'guardian_relationship', 'guardian_phone', 'emergency_contact',
+    'address', 'contact_no', 'email', 'date_of_birth', 'gender', 'family_info', 'emergency_contact', 'other_details',
   ];
   const updates = {};
   allowed.forEach((key) => {
     if (data[key] !== undefined) updates[key] = data[key];
   });
   await profile.update(updates);
-  await refreshCompletionStatus(studentId);
-  return profile;
+  return refreshCompletionPct(studentId);
 }
 
-async function uploadDocument(studentId, uploadedByUserId, documentType, file) {
+async function uploadPhoto(studentId, file) {
+  await findStudentOrThrow(studentId);
+  const relativePath = await storageService.persist(file.path, { studentId, category: 'photo' });
+
+  await ProfilePhotograph.update(
+    { is_active: false },
+    { where: { student_id: studentId, is_active: true } },
+  );
+  const photo = await ProfilePhotograph.create({ student_id: studentId, file_path: relativePath });
+
+  await refreshCompletionPct(studentId);
+  return photo;
+}
+
+async function uploadSignature(studentId, file) {
+  await findStudentOrThrow(studentId);
+  const relativePath = await storageService.persist(file.path, { studentId, category: 'signature' });
+
+  await Signature.update(
+    { is_active: false },
+    { where: { student_id: studentId, is_active: true } },
+  );
+  const signature = await Signature.create({ student_id: studentId, file_path: relativePath });
+
+  await refreshCompletionPct(studentId);
+  return signature;
+}
+
+async function uploadDocument(studentId, docType, file) {
   await findStudentOrThrow(studentId);
   const relativePath = await storageService.persist(file.path, { studentId, category: 'documents' });
 
-  const document = await StudentDocument.create({
+  const document = await SupportingDocument.create({
     student_id: studentId,
-    document_type: documentType,
+    doc_type: docType,
     file_path: relativePath,
-    file_name: file.originalname,
-    uploaded_by: uploadedByUserId,
   });
 
-  await refreshCompletionStatus(studentId);
+  await refreshCompletionPct(studentId);
   return document;
-}
-
-async function uploadMedia(studentId, uploadedByUserId, mediaType, file) {
-  await findStudentOrThrow(studentId);
-  const relativePath = await storageService.persist(file.path, { studentId, category: 'media' });
-
-  await StudentMedia.update(
-    { is_current: false },
-    { where: { student_id: studentId, media_type: mediaType, is_current: true } },
-  );
-
-  const media = await StudentMedia.create({
-    student_id: studentId,
-    media_type: mediaType,
-    file_path: relativePath,
-    file_name: file.originalname,
-    mime_type: file.mimetype,
-    uploaded_by: uploadedByUserId,
-  });
-
-  return media;
 }
 
 module.exports = {
   findStudentOrThrow,
   getOrCreateProfile,
   getFullProfile,
-  updatePersonalDetails,
-  updateContactAndFamilyInfo,
+  updateProfile,
+  uploadPhoto,
+  uploadSignature,
   uploadDocument,
-  uploadMedia,
-  refreshCompletionStatus,
+  refreshCompletionPct,
 };

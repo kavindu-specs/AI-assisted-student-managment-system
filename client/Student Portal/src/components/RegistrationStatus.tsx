@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useStudentWorkflow } from '../StudentWorkflow';
 import {
   BellIcon,
@@ -24,40 +24,89 @@ type TimelineStep = {
   state: TimelineState;
 };
 
-const TIMELINE: TimelineStep[] = [
-{ title: 'Admission Imported', description: 'Your admission record has been successfully imported by the university.', detail: '15 May 2026, 09:15 AM', state: 'complete' },
-{ title: 'Profile Completed', description: 'You have completed all required personal and academic information.', detail: '16 May 2026, 11:42 AM', state: 'complete' },
-{ title: 'Documents Uploaded', description: 'All required documents have been uploaded successfully.', detail: '17 May 2026, 02:30 PM', state: 'complete' },
-{ title: 'Verification', description: 'Your documents and information are being verified by the university.', detail: 'Since 18 May 2026, 10:05 AM', state: 'current' },
-{ title: 'Registration Approved', description: 'Your registration will be approved after verification.', detail: 'Pending', state: 'pending' },
-{ title: 'Eligible for Course Registration', description: 'You will be able to register for courses once approved.', detail: 'Pending', state: 'pending' }];
-
-
-const SUMMARY = [
-{ label: 'Registration No.', value: 'RUSL/AG/2026/0081', icon: FileTextIcon },
-{ label: 'Student Name', value: 'Nimesh Perera', icon: UserRoundIcon },
-{ label: 'Faculty', value: 'Faculty of Agriculture', icon: LandmarkIcon },
-{ label: 'Programme', value: 'BSc Hons (Agriculture)', icon: GraduationCapIcon },
-{ label: 'Academic Year', value: '2026/2027', icon: ClipboardCheckIcon }] as
-const;
-
 function TimelineIcon({ state }: {state: TimelineState;}) {
   if (state === 'complete') return <CheckCircle2Icon className="h-5 w-5" strokeWidth={2.2} />;
   if (state === 'current') return <LoaderCircleIcon className="h-5 w-5" strokeWidth={2} />;
   return <HourglassIcon className="h-4 w-4" strokeWidth={1.8} />;
 }
 
+const STATE_LABEL: Record<TimelineState, string> = { complete: 'Completed', current: 'In Progress', pending: 'Pending' };
+
 export function RegistrationStatus() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [downloaded, setDownloaded] = useState(false);
-  const { stage } = useStudentWorkflow();
-  const approved = stage === 'approved' || stage === 'course-review' || stage === 'complete';
+  const { profileSnapshot, refresh, loading } = useStudentWorkflow();
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function downloadSlip() {
     setDownloaded(true);
     window.setTimeout(() => setDownloaded(false), 1800);
   }
+
+  const student = profileSnapshot?.student;
+  const profile = profileSnapshot?.profile;
+  const documents = profileSnapshot?.documents ?? [];
+  const pct = Number(profile?.profile_completion_pct ?? 0);
+  const currentStatus = student?.current_status;
+  const approved = currentStatus === 'Registered' || currentStatus === 'Graduated' || currentStatus === 'Released';
+
+  // Map the coarse backend signals (profile_completion_pct, current_status,
+  // documents[]) onto the mockup's 6-step admission timeline. There's no
+  // dedicated "imported" flag or per-step timestamp in this schema - see
+  // server/docs/API.md "Known simplifications" - so a student's mere
+  // existence satisfies "Admission Imported", and completed steps show a
+  // status label instead of a fabricated date.
+  const TIMELINE: TimelineStep[] = [
+    {
+      title: 'Admission Imported',
+      description: 'Your admission record has been imported by the university.',
+      detail: 'Reg. no. ' + (student?.reg_number ?? '—'),
+      state: 'complete',
+    },
+    {
+      title: 'Profile Completed',
+      description: 'Complete all required personal and academic information.',
+      detail: `${Math.round(pct)}% complete`,
+      state: pct >= 100 ? 'complete' : pct > 0 ? 'current' : 'pending',
+    },
+    {
+      title: 'Documents Uploaded',
+      description: 'Upload all required supporting documents.',
+      detail: documents.length > 0 ? `${documents.length} document${documents.length === 1 ? '' : 's'} on file` : 'No documents uploaded yet',
+      state: documents.length > 0 ? 'complete' : pct >= 100 ? 'current' : 'pending',
+    },
+    {
+      title: 'Verification',
+      description: 'Your documents and information are being verified by the university.',
+      detail: currentStatus === 'Prospective' ? 'Awaiting admin decision' : approved ? 'Verified' : 'Pending',
+      state: pct < 100 ? 'pending' : currentStatus === 'Prospective' ? 'current' : 'complete',
+    },
+    {
+      title: 'Registration Approved',
+      description: 'Your registration is approved once verification is complete.',
+      detail: approved ? `Status: ${currentStatus}` : 'Pending',
+      state: approved ? 'complete' : 'pending',
+    },
+    {
+      title: 'Eligible for Course Registration',
+      description: 'Register for courses once your registration is approved.',
+      detail: approved ? 'You can register for courses now' : 'Pending',
+      state: approved ? 'complete' : 'pending',
+    },
+  ];
+
+  const SUMMARY = [
+    { label: 'Registration No.', value: student?.reg_number ?? '—', icon: FileTextIcon },
+    { label: 'Student Name', value: student?.full_name ?? '—', icon: UserRoundIcon },
+    { label: 'Faculty', value: student?.Programme?.Faculty?.faculty_name ?? '—', icon: LandmarkIcon },
+    { label: 'Programme', value: student?.Programme?.programme_name ?? '—', icon: GraduationCapIcon },
+    { label: 'Intake', value: student?.Intake?.intake_code ?? '—', icon: ClipboardCheckIcon },
+  ];
 
   return (
     <main className="px-5 py-6 sm:px-8 lg:px-9">
@@ -73,7 +122,7 @@ export function RegistrationStatus() {
               <div className="flex items-center gap-4">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-emerald-500 bg-white text-emerald-600"><CheckCircle2Icon className="h-6 w-6" /></span>
                 <div>
-                  <h2 className="text-sm font-extrabold text-emerald-800">{approved ? 'Your registration has been approved' : 'Your registration is in verification'}</h2>
+                  <h2 className="text-sm font-extrabold text-emerald-800">{loading ? 'Loading your registration status…' : approved ? 'Your registration has been approved' : 'Your registration is in verification'}</h2>
                   <p className="mt-1 text-xs text-slate-600">{approved ? 'You are now eligible for course registration.' : 'The university is reviewing your profile and documents.'}</p>
                 </div>
               </div>
@@ -92,7 +141,7 @@ export function RegistrationStatus() {
                     <div className="min-w-0 pt-0.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <h3 className="text-sm font-bold text-slate-800">{index + 1}. {step.title}</h3>
-                        <span className={`rounded px-2.5 py-1 text-[10px] font-bold ${step.state === 'complete' ? 'bg-emerald-100 text-emerald-700' : step.state === 'current' ? 'bg-gold/20 text-maroon' : 'bg-slate-100 text-slate-500'}`}>{step.state === 'complete' ? 'Completed' : step.state === 'current' ? 'In Progress' : 'Pending'}</span>
+                        <span className={`rounded px-2.5 py-1 text-[10px] font-bold ${step.state === 'complete' ? 'bg-emerald-100 text-emerald-700' : step.state === 'current' ? 'bg-gold/20 text-maroon' : 'bg-slate-100 text-slate-500'}`}>{STATE_LABEL[step.state]}</span>
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-slate-500">{step.description}</p>
                       <p className="mt-1.5 text-[11px] font-medium text-slate-500">{step.detail}</p>
@@ -121,7 +170,7 @@ export function RegistrationStatus() {
                 <div className="flex items-center gap-3">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gold/20 text-maroon"><LoaderCircleIcon className="h-4 w-4" strokeWidth={1.7} /></span>
                   <dt className="text-[11px] font-semibold text-slate-500">Registration Status</dt>
-                  <dd className="ml-auto rounded bg-gold/20 px-2 py-1 text-[10px] font-bold text-maroon">In Progress</dd>
+                  <dd className="ml-auto rounded bg-gold/20 px-2 py-1 text-[10px] font-bold text-maroon">{currentStatus ?? '—'}</dd>
                 </div>
               </dl>
             </section>

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeftIcon,
@@ -7,8 +7,6 @@ import {
   BookOpenIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ClipboardListIcon,
   DownloadIcon,
   EyeIcon,
@@ -24,19 +22,30 @@ import {
   UsersIcon } from
 'lucide-react';
 import { LogoutButton } from '../components/LogoutButton';
+import { api, ApiError } from '../lib/apiClient';
 
-type StudentStatus = 'Active' | 'Pending' | 'On Hold';
-type StatusFilter = 'All Status' | StudentStatus;
+type CurrentStatus = 'Prospective' | 'Registered' | 'Graduated' | 'Released';
+type StatusFilter = 'All Status' | CurrentStatus;
+
+type ApiStudent = {
+  student_id: number;
+  reg_number: string;
+  full_name: string;
+  nic: string;
+  current_status: CurrentStatus;
+  account_status: string;
+  Programme?: { programme_id: number; programme_name: string; Faculty?: { faculty_id: number; faculty_name: string } };
+};
 
 type Student = {
-  id: string;
+  id: number;
+  regNumber: string;
   name: string;
   initials: string;
   faculty: string;
   programme: string;
-  email: string;
-  intake: string;
-  status: StudentStatus;
+  status: CurrentStatus;
+  accountStatus: string;
 };
 
 const navigationItems = [
@@ -48,17 +57,15 @@ const navigationItems = [
 { label: 'Settings', icon: SettingsIcon, to: '/settings' }];
 
 
-const students: Student[] = [
-{ id: 'RUSL/AG/2026/0001', name: 'Tharindu Dissanayake', initials: 'TD', faculty: 'Plant Sciences', programme: 'Agricultural Biology', email: 'tharindu.d@agri.rjt.ac.lk', intake: 'July 2026', status: 'Active' },
-{ id: 'RUSL/AG/2026/0002', name: 'Nimesh Perera', initials: 'NP', faculty: 'Agricultural Systems', programme: 'Agricultural Economics and Extension', email: 'nimesh.p@agri.rjt.ac.lk', intake: 'July 2026', status: 'Active' },
-{ id: 'RUSL/AG/2026/0003', name: 'Pasindu Fernando', initials: 'PF', faculty: 'Agricultural Engineering & Soil Science', programme: 'Agricultural Engineering', email: 'pasindu.f@agri.rjt.ac.lk', intake: 'July 2026', status: 'Active' },
-{ id: 'RUSL/AG/2026/0004', name: 'Kavindi Silva', initials: 'KS', faculty: 'Agricultural Systems', programme: 'Agricultural Systems and Management', email: 'kavindi.s@agri.rjt.ac.lk', intake: 'July 2026', status: 'Pending' },
-{ id: 'RUSL/AG/2026/0005', name: 'Hasini Jayawardena', initials: 'HJ', faculty: 'Animal & Food Sciences', programme: 'Animal Production and Technology', email: 'hasini.j@agri.rjt.ac.lk', intake: 'July 2026', status: 'Active' },
-{ id: 'RUSL/AG/2026/0006', name: 'Sachith Wijesinghe', initials: 'SW', faculty: 'Plant Sciences', programme: 'Crop Science', email: 'sachith.w@agri.rjt.ac.lk', intake: 'January 2026', status: 'On Hold' },
-{ id: 'RUSL/AG/2026/0007', name: 'Chathuri Bandara', initials: 'CB', faculty: 'Animal & Food Sciences', programme: 'Food and Postharvest Technology', email: 'chathuri.b@agri.rjt.ac.lk', intake: 'January 2026', status: 'Active' }];
-
+function initialsOf(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '—';
+}
 
 export function StudentsPage() {
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [query, setQuery] = useState('');
   const [faculty, setFaculty] = useState('All Faculties');
   const [status, setStatus] = useState<StatusFilter>('All Status');
@@ -66,20 +73,50 @@ export function StudentsPage() {
   const [notice, setNotice] = useState('');
   const navigate = useNavigate();
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadError('');
+    const queryString = status === 'All Status' ? '' : `?status=${encodeURIComponent(status)}`;
+    api.get<ApiStudent[]>(`/admin/students${queryString}`)
+      .then((rows) => {
+        if (cancelled) return;
+        setStudents(rows.map((student) => ({
+          id: student.student_id,
+          regNumber: student.reg_number,
+          name: student.full_name,
+          initials: initialsOf(student.full_name),
+          faculty: student.Programme?.Faculty?.faculty_name ?? '—',
+          programme: student.Programme?.programme_name ?? '—',
+          status: student.current_status,
+          accountStatus: student.account_status
+        })));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(err instanceof ApiError ? err.message : 'Failed to load students.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [status]);
+
+  const facultyOptions = useMemo(() => ['All Faculties', ...Array.from(new Set(students.map((student) => student.faculty)))], [students]);
+
   const visibleStudents = useMemo(() => {
     const search = query.trim().toLowerCase();
     return students.filter((student) => {
-      const matchesSearch = !search || [student.id, student.name, student.email, student.programme].some((value) => value.toLowerCase().includes(search));
+      const matchesSearch = !search || [student.regNumber, student.name, student.programme].some((value) => value.toLowerCase().includes(search));
       const matchesFaculty = faculty === 'All Faculties' || student.faculty === faculty;
-      const matchesStatus = status === 'All Status' || student.status === status;
-      return matchesSearch && matchesFaculty && matchesStatus;
+      return matchesSearch && matchesFaculty;
     });
-  }, [query, faculty, status]);
+  }, [students, query, faculty]);
 
   const downloadDirectory = () => {
-    const rows = students.map((student) => `${student.id},${student.name},${student.faculty},${student.programme},${student.email},${student.status}`).join('\n');
+    const rows = students.map((student) => `${student.regNumber},${student.name},${student.faculty},${student.programme},${student.status}`).join('\n');
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([`Student ID,Student Name,Faculty,Programme,Email,Status\n${rows}`], { type: 'text/csv' }));
+    link.href = URL.createObjectURL(new Blob([`Registration No,Student Name,Faculty,Programme,Status\n${rows}`], { type: 'text/csv' }));
     link.download = 'rajarata-student-directory.csv';
     link.click();
     URL.revokeObjectURL(link.href);
@@ -108,12 +145,13 @@ export function StudentsPage() {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7 sm:py-7"><div className="mx-auto max-w-[1360px] space-y-4">
           {notice && <div role="status" className="flex items-center justify-between gap-3 rounded-lg border border-gold/50 bg-gold/10 px-4 py-3 text-sm text-maroon"><span>{notice}</span><button type="button" onClick={() => setNotice('')} className="text-xs font-bold hover:text-maroon-dark">Dismiss</button></div>}
-          <section className="grid divide-y divide-stone-200 overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4" aria-label="Student directory summary"><Metric icon={UsersIcon} iconClass="bg-maroon/10 text-maroon" label="Agriculture Students" value="642" /><Metric icon={CheckCircle2Icon} iconClass="bg-emerald-100 text-emerald-600" label="Active Students" value="611" /><Metric icon={GraduationCapIcon} iconClass="bg-gold/20 text-amber-700" label="Current Intake" value="165" /><Metric icon={MailIcon} iconClass="bg-blue-100 text-blue-700" label="Email Verified" value="628" /></section>
+          {loadError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>}
+          <section className="grid divide-y divide-stone-200 overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4" aria-label="Student directory summary"><Metric icon={UsersIcon} iconClass="bg-maroon/10 text-maroon" label="Loaded Students" value={String(students.length)} /><Metric icon={CheckCircle2Icon} iconClass="bg-emerald-100 text-emerald-600" label="Registered" value={String(students.filter((s) => s.status === 'Registered').length)} /><Metric icon={GraduationCapIcon} iconClass="bg-gold/20 text-amber-700" label="Prospective" value={String(students.filter((s) => s.status === 'Prospective').length)} /><Metric icon={MailIcon} iconClass="bg-blue-100 text-blue-700" label="Graduated" value={String(students.filter((s) => s.status === 'Graduated').length)} /></section>
 
           <section className="overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
-            <div className="flex flex-col gap-3 border-b border-stone-200 p-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="font-bold text-slate-900">Faculty Students</h2><p className="mt-1 text-xs text-slate-500">Showing {visibleStudents.length} of 642 agriculture student records</p></div><div className="flex flex-col gap-2 sm:flex-row"><label className="flex min-w-0 items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-2.5 sm:w-72"><SearchIcon className="h-4 w-4 shrink-0 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, ID or email..." className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-slate-400" /></label><DirectorySelect icon={GraduationCapIcon} value={faculty} onChange={setFaculty} options={['All Faculties', 'Agricultural Engineering & Soil Science', 'Agricultural Systems', 'Animal & Food Sciences', 'Plant Sciences']} /><DirectorySelect icon={FilterIcon} value={status} onChange={(value) => setStatus(value as StatusFilter)} options={['All Status', 'Active', 'Pending', 'On Hold']} /></div></div>
-            <div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left"><thead className="border-b border-stone-200 bg-stone-50 text-[10px] uppercase tracking-[0.08em] text-slate-500"><tr><th className="px-4 py-3 font-bold">Student</th><th className="px-4 py-3 font-bold">Registration No.</th><th className="px-4 py-3 font-bold">Department</th><th className="px-4 py-3 font-bold">Specialization</th><th className="px-4 py-3 font-bold">Intake</th><th className="px-4 py-3 font-bold">Status</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-stone-100">{visibleStudents.map((student) => <StudentRow key={student.id} student={student} onView={() => setNotice(`${student.name}'s student record is ready for review.`)} />)}{!visibleStudents.length && <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-500">No students match these filters.</td></tr>}</tbody></table></div>
-            <div className="flex items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 text-xs text-slate-500"><p>Showing 1 to {visibleStudents.length} of 642 entries</p><div className="flex items-center gap-1"><button type="button" aria-label="Previous page" className="rounded border border-stone-200 p-1 text-slate-400"><ChevronLeftIcon className="h-4 w-4" /></button><span className="rounded bg-maroon px-2.5 py-1 font-bold text-white">1</span><button type="button" className="rounded px-2 py-1 hover:text-maroon">2</button><button type="button" className="rounded px-2 py-1 hover:text-maroon">3</button><span>…</span><button type="button" aria-label="Next page" className="rounded border border-stone-200 p-1 hover:text-maroon"><ChevronRightIcon className="h-4 w-4" /></button></div></div>
+            <div className="flex flex-col gap-3 border-b border-stone-200 p-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="font-bold text-slate-900">Faculty Students</h2><p className="mt-1 text-xs text-slate-500">Showing {visibleStudents.length} of {students.length} student records</p></div><div className="flex flex-col gap-2 sm:flex-row"><label className="flex min-w-0 items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-2.5 sm:w-72"><SearchIcon className="h-4 w-4 shrink-0 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, reg. no or programme..." className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-slate-400" /></label><DirectorySelect icon={GraduationCapIcon} value={faculty} onChange={setFaculty} options={facultyOptions} /><DirectorySelect icon={FilterIcon} value={status} onChange={(value) => setStatus(value as StatusFilter)} options={['All Status', 'Prospective', 'Registered', 'Graduated', 'Released']} /></div></div>
+            <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left"><thead className="border-b border-stone-200 bg-stone-50 text-[10px] uppercase tracking-[0.08em] text-slate-500"><tr><th className="px-4 py-3 font-bold">Student</th><th className="px-4 py-3 font-bold">Registration No.</th><th className="px-4 py-3 font-bold">Faculty</th><th className="px-4 py-3 font-bold">Programme</th><th className="px-4 py-3 font-bold">Status</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-stone-100">{loading ? <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-500">Loading students…</td></tr> : visibleStudents.map((student) => <StudentRow key={student.id} student={student} onView={() => setNotice(`${student.name}'s student record is ready for review.`)} />)}{!loading && !visibleStudents.length && <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-500">No students match these filters.</td></tr>}</tbody></table></div>
+            <div className="flex items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 text-xs text-slate-500"><p>Showing {visibleStudents.length} of {students.length} entries</p></div>
           </section>
         </div></div>
       </main>
@@ -131,8 +169,8 @@ function DirectorySelect({ icon: Icon, value, onChange, options }: {icon: typeof
 }
 
 function StudentRow({ student, onView }: {student: Student;onView: () => void;}) {
-  const palette = student.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : student.status === 'Pending' ? 'bg-gold/25 text-amber-800' : 'bg-slate-100 text-slate-600';
-  return <tr className="text-xs text-slate-700"><td className="px-4 py-3"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-maroon/10 text-[11px] font-extrabold text-maroon">{student.initials}</span><div><p className="font-bold text-slate-900">{student.name}</p><p className="mt-0.5 text-slate-500">{student.email}</p></div></div></td><td className="whitespace-nowrap px-4 py-3 font-medium text-maroon">{student.id}</td><td className="whitespace-nowrap px-4 py-3">{student.faculty}</td><td className="max-w-56 px-4 py-3 leading-relaxed">{student.programme}</td><td className="whitespace-nowrap px-4 py-3">{student.intake}</td><td className="px-4 py-3"><span className={`rounded px-2 py-1 text-[10px] font-bold ${palette}`}>{student.status}</span></td><td className="px-4 py-3"><button type="button" onClick={onView} className="flex items-center gap-1 rounded border border-stone-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:border-maroon hover:text-maroon"><EyeIcon className="h-3.5 w-3.5" /> View</button></td></tr>;
+  const palette = student.status === 'Registered' ? 'bg-emerald-100 text-emerald-700' : student.status === 'Prospective' ? 'bg-gold/25 text-amber-800' : 'bg-slate-100 text-slate-600';
+  return <tr className="text-xs text-slate-700"><td className="px-4 py-3"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-maroon/10 text-[11px] font-extrabold text-maroon">{student.initials}</span><div><p className="font-bold text-slate-900">{student.name}</p><p className="mt-0.5 text-slate-500">{student.accountStatus}</p></div></div></td><td className="whitespace-nowrap px-4 py-3 font-medium text-maroon">{student.regNumber}</td><td className="whitespace-nowrap px-4 py-3">{student.faculty}</td><td className="max-w-56 px-4 py-3 leading-relaxed">{student.programme}</td><td className="px-4 py-3"><span className={`rounded px-2 py-1 text-[10px] font-bold ${palette}`}>{student.status}</span></td><td className="px-4 py-3"><button type="button" onClick={onView} className="flex items-center gap-1 rounded border border-stone-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:border-maroon hover:text-maroon"><EyeIcon className="h-3.5 w-3.5" /> View</button></td></tr>;
 }
 
 function UniversityMark() {

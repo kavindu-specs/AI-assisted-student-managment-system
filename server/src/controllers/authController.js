@@ -15,8 +15,8 @@ function extractPreAuthPayload(req) {
 }
 
 const studentLogin = asyncHandler(async (req, res) => {
-  const { registrationNo, password } = req.body;
-  const result = await authService.studentLogin(registrationNo, password);
+  const { regNumber, password } = req.body;
+  const result = await authService.studentLogin(regNumber, password);
   return success(res, result, 'Login successful');
 });
 
@@ -28,8 +28,8 @@ const completeFirstLogin = asyncHandler(async (req, res) => {
 });
 
 const adminLogin = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  const result = await authService.adminLogin(email, password);
+  const { institutionalEmail, password } = req.body;
+  const result = await authService.adminLogin(institutionalEmail, password);
   return success(res, result, 'Login successful');
 });
 

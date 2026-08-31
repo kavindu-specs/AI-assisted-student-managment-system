@@ -4,32 +4,26 @@ module.exports = {
     STUDENT: 'student',
   },
 
-  STUDENT_STATUS: {
-    PENDING: 'Pending',
-    APPROVED: 'Approved',
-    REJECTED: 'Rejected',
-    ACTIVE: 'Active',
-    SUSPENDED: 'Suspended',
-    GRADUATED: 'Graduated',
-    WITHDRAWN: 'Withdrawn',
-  },
-
-  ACCOUNT_STATUS: {
+  // user_account.status
+  USER_ACCOUNT_STATUS: {
     ACTIVE: 'Active',
     INACTIVE: 'Inactive',
     LOCKED: 'Locked',
   },
 
-  PROFILE_COMPLETION_STATUS: {
-    NOT_STARTED: 'Not Started',
-    IN_PROGRESS: 'In Progress',
-    COMPLETED: 'Completed',
+  // student.account_status - Inactive (not yet approved) / Active / Suspended (rejected or disciplinary)
+  STUDENT_ACCOUNT_STATUS: {
+    ACTIVE: 'Active',
+    INACTIVE: 'Inactive',
+    SUSPENDED: 'Suspended',
   },
 
-  VERIFICATION_STATUS: {
-    PENDING: 'Pending',
-    VERIFIED: 'Verified',
-    REJECTED: 'Rejected',
+  // student.current_status - the academic lifecycle stage
+  STUDENT_CURRENT_STATUS: {
+    PROSPECTIVE: 'Prospective',
+    REGISTERED: 'Registered',
+    GRADUATED: 'Graduated',
+    RELEASED: 'Released',
   },
 
   VALIDATION_STATUS: {
@@ -44,6 +38,13 @@ module.exports = {
     FAILED: 'Failed',
   },
 
+  CORRECTION_REQUEST_STATUS: {
+    PENDING: 'Pending',
+    APPROVED: 'Approved',
+    REJECTED: 'Rejected',
+    COMPLETED: 'Completed',
+  },
+
   COURSE_REGISTRATION_STATUS: {
     DRAFT: 'Draft',
     SUBMITTED: 'Submitted',
@@ -51,29 +52,11 @@ module.exports = {
     REJECTED: 'Rejected',
   },
 
-  SEMESTER_REGISTRATION_STATUS: {
-    PENDING: 'Pending',
-    REGISTERED: 'Registered',
-    CANCELLED: 'Cancelled',
-  },
-
-  COURSE_TYPE: {
-    COMPULSORY: 'Compulsory',
-    ELECTIVE: 'Elective',
-  },
-
-  DOCUMENT_TYPE: {
-    NIC_COPY: 'NIC Copy',
-    BIRTH_CERTIFICATE: 'Birth Certificate',
-    ADMISSION_LETTER: 'Admission Letter',
-    MEDICAL_CERTIFICATE: 'Medical Certificate',
-    SCHOOL_CERTIFICATE: 'School Certificate',
-    OTHER: 'Other',
-  },
-
-  MEDIA_TYPE: {
-    PROFILE_PHOTO: 'Profile Photo',
-    SIGNATURE: 'Signature',
+  NOTIFICATION_TYPE: {
+    INFO: 'Info',
+    SUCCESS: 'Success',
+    WARNING: 'Warning',
+    ERROR: 'Error',
   },
 
   MIN_REGISTRATION_CREDITS: 15,

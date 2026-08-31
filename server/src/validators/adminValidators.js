@@ -1,9 +1,9 @@
 const { z } = require('zod');
 
 const bulkImportSchema = z.object({
+  programmeId: z.coerce.number().int().positive(),
   intakeId: z.coerce.number().int().positive(),
   regulationId: z.coerce.number().int().positive(),
-  programmeId: z.coerce.number().int().positive(),
 });
 
 const approvalDecisionSchema = z.object({
@@ -12,18 +12,20 @@ const approvalDecisionSchema = z.object({
 });
 
 const courseRegistrationDecisionSchema = z.object({
-  courseRegistrationIds: z.array(z.number().int().positive()).min(1),
+  registrationIds: z.array(z.number().int().positive()).min(1),
 });
 
 const documentVerificationSchema = z.object({
-  status: z.enum(['Verified', 'Rejected']),
-  rejectionReason: z.string().optional(),
+  isVerified: z.boolean(),
+  reason: z.string().optional(),
 });
 
-const semesterActivationSchema = z.object({
-  studentIds: z.array(z.number().int().positive()).min(1),
-  semesterId: z.number().int().positive(),
-  studyYear: z.number().int().positive(),
+const correctionRequestSchema = z.object({
+  justification: z.string().optional(),
+});
+
+const correctionDecisionSchema = z.object({
+  status: z.enum(['Approved', 'Rejected', 'Completed']),
 });
 
 module.exports = {
@@ -31,5 +33,6 @@ module.exports = {
   approvalDecisionSchema,
   courseRegistrationDecisionSchema,
   documentVerificationSchema,
-  semesterActivationSchema,
+  correctionRequestSchema,
+  correctionDecisionSchema,
 };

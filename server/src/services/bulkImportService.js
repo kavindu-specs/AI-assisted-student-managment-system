@@ -1,11 +1,14 @@
 const fs = require('fs');
 const XLSX = require('xlsx');
 const {
-  ImportBatch, ImportBatchRecord, Student, StudentProfile, sequelize,
+  ImportBatch, Student, StudentAccount, StudentProfile, UserAccount, Role, Programme, Intake, sequelize,
 } = require('../models');
 const AppError = require('../utils/AppError');
+const { generateRegistrationNo } = require('../utils/registrationNumber');
+const { generateTempPassword, hash } = require('../utils/password');
+const { calculateCompletionPct } = require('../utils/profileCompletion');
 const {
-  VALIDATION_STATUS, IMPORT_BATCH_STATUS, STUDENT_STATUS,
+  VALIDATION_STATUS, IMPORT_BATCH_STATUS, USER_ACCOUNT_STATUS, ROLES,
 } = require('../config/constants');
 
 const NIC_REGEX = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
@@ -32,7 +35,9 @@ function normalizeGender(value) {
   return null;
 }
 
-function validateRow({ fullName, nic, dob, gender }, isDuplicateNic) {
+function validateRow({
+  fullName, nic, dob, gender,
+}, isDuplicateNic) {
   const errors = [];
   if (!fullName) errors.push('Full Name is required');
   if (!nic) errors.push('NIC is required');
@@ -46,80 +51,102 @@ function validateRow({ fullName, nic, dob, gender }, isDuplicateNic) {
 }
 
 /**
- * Parses the uploaded sheet, validates every row, and creates real Student
- * records for rows that pass validation (or only carry a non-fatal warning),
- * all inside one transaction so the import_batch/import_batch_record audit
- * trail always matches what actually landed in `student`.
+ * Parses the uploaded sheet, validates every row, and creates a full
+ * identity (UserAccount + Student + StudentAccount + StudentProfile) for
+ * every row that passes validation - required because `student_id` is a FK
+ * to `user_account.user_id` (ISA subtype), so a Student can't exist without
+ * an account. The account is created Inactive/unusable; approval activates it.
+ *
+ * The schema has no per-row import table, so validation results are
+ * returned in this response only (not persisted beyond the batch aggregate).
  */
 async function importStudents({
-  filePath, originalFileName, intakeId, regulationId, programmeId, uploadedByUserId,
+  filePath, originalFileName, programmeId, intakeId, regulationId, importedByAdminId,
 }) {
   const rows = readRows(filePath);
   if (rows.length === 0) throw new AppError('The uploaded file has no data rows', 422);
 
-  const existingNicRows = await Student.findAll({ attributes: ['nic_no'] });
-  const existingNicSet = new Set(existingNicRows.map((s) => s.nic_no));
+  const programme = await Programme.findByPk(programmeId);
+  if (!programme) throw new AppError('Programme not found', 404);
+  const intake = await Intake.findByPk(intakeId);
+  if (!intake) throw new AppError('Intake not found', 404);
+
+  const existingNicRows = await Student.findAll({ attributes: ['nic'] });
+  const existingNicSet = new Set(existingNicRows.map((s) => s.nic));
   const seenInFile = new Set();
+
+  const studentRole = await Role.findOne({ where: { role_name: ROLES.STUDENT } });
 
   let successful = 0;
   let failed = 0;
-  const recordRows = [];
+  const resultRows = [];
 
-  const result = await sequelize.transaction(async (t) => {
-    const batch = await ImportBatch.create({
+  const batch = await sequelize.transaction(async (t) => {
+    const createdBatch = await ImportBatch.create({
       file_name: originalFileName,
-      intake_id: intakeId,
-      regulation_id: regulationId,
-      uploaded_by: uploadedByUserId,
+      imported_by: importedByAdminId,
       total_records: rows.length,
     }, { transaction: t });
 
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       const fullName = String(row['Full Name'] || '').trim();
-      const nic = String(row['NIC'] || '').trim();
-      const dob = excelDateToIso(row['DOB']);
-      const gender = normalizeGender(row['Gender']);
-      const indexNo = String(row['O/L Index No.'] || '').trim();
-      const email = String(row['Email'] || '').trim();
-      const phone = String(row['Phone'] || '').trim();
-      const address = String(row['Address'] || '').trim();
+      const nic = String(row.NIC || '').trim();
+      const dob = excelDateToIso(row.DOB);
+      const gender = normalizeGender(row.Gender);
+      const email = String(row.Email || '').trim();
+      const phone = String(row.Phone || '').trim();
+      const address = String(row.Address || '').trim();
 
       const isDuplicate = Boolean(nic) && (existingNicSet.has(nic) || seenInFile.has(nic));
       if (nic) seenInFile.add(nic);
 
-      const hardError = validateRow({ fullName, nic, dob, gender }, isDuplicate);
+      const hardError = validateRow({
+        fullName, nic, dob, gender,
+      }, isDuplicate);
       let status = hardError ? hardError.status : VALIDATION_STATUS.VALID;
       let message = hardError ? hardError.message : null;
       let studentId = null;
+      let regNumber = null;
 
-      if (!hardError && !indexNo) {
+      if (!hardError && !(email || phone || address)) {
         status = VALIDATION_STATUS.WARNING;
-        message = 'O/L Index No. is missing';
+        message = 'No contact details (email/phone/address) supplied - profile will start incomplete';
       }
 
       if (status !== VALIDATION_STATUS.ERROR) {
+        regNumber = await generateRegistrationNo(programme.programme_code, intake.intake_year);
+        const username = regNumber.replace(/-/g, '');
+
+        const account = await UserAccount.create({
+          username,
+          email: `${username.toLowerCase()}@students.rjt.ac.lk`,
+          password_hash: await hash(generateTempPassword()),
+          status: USER_ACCOUNT_STATUS.INACTIVE,
+        }, { transaction: t });
+
         const student = await Student.create({
-          index_no: indexNo || null,
-          nic_no: nic,
+          student_id: account.user_id,
+          reg_number: regNumber,
           full_name: fullName,
-          name_with_initials: fullName,
-          date_of_birth: dob,
-          gender,
-          student_status: STUDENT_STATUS.PENDING,
+          nic,
           programme_id: programmeId,
           intake_id: intakeId,
           regulation_id: regulationId,
         }, { transaction: t });
 
-        if (email || phone || address) {
-          await StudentProfile.create({
-            student_id: student.student_id,
-            email: email || null,
-            mobile_phone: phone || null,
-            address_line_1: address || null,
-          }, { transaction: t });
-        }
+        await StudentAccount.create({ student_id: student.student_id }, { transaction: t });
+
+        const profile = { email: email || null, contact_no: phone || null, address: address || null };
+        await StudentProfile.create({
+          student_id: student.student_id,
+          ...profile,
+          date_of_birth: dob,
+          gender,
+          profile_completion_pct: calculateCompletionPct(profile),
+        }, { transaction: t });
+
+        if (studentRole) await account.addRole(studentRole, { transaction: t });
 
         studentId = student.student_id;
         successful += 1;
@@ -127,39 +154,29 @@ async function importStudents({
         failed += 1;
       }
 
-      recordRows.push({
-        import_batch_id: batch.import_batch_id,
+      resultRows.push({
         row_number: i + 1,
-        registration_no: null,
-        nic_no: nic || null,
-        student_name: fullName || null,
+        reg_number: regNumber,
+        nic: nic || null,
+        full_name: fullName || null,
         validation_status: status,
-        error_message: message,
+        message,
         student_id: studentId,
       });
     }
 
-    await ImportBatchRecord.bulkCreate(recordRows, { transaction: t });
-    await batch.update({
-      successful_records: successful,
-      failed_records: failed,
+    await createdBatch.update({
+      valid_records: successful,
+      invalid_records: failed,
       status: IMPORT_BATCH_STATUS.COMPLETED,
     }, { transaction: t });
 
-    return batch;
+    return createdBatch;
   });
 
   fs.unlink(filePath, () => {});
 
-  const records = await ImportBatchRecord.findAll({ where: { import_batch_id: result.import_batch_id } });
-  return { batch: result, records };
+  return { batch, rows: resultRows };
 }
 
-async function getBatchWithRecords(importBatchId) {
-  const batch = await ImportBatch.findByPk(importBatchId);
-  if (!batch) throw new AppError('Import batch not found', 404);
-  const records = await ImportBatchRecord.findAll({ where: { import_batch_id: importBatchId } });
-  return { batch, records };
-}
-
-module.exports = { importStudents, getBatchWithRecords };
+module.exports = { importStudents };
