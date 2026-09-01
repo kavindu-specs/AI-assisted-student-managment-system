@@ -112,8 +112,3 @@ the working tree, primarily under `human_refactored_code/server`.
 - `human_refactored_code/server/tests/services/bulkImportService.test.js`
 - `human_refactored_code/server/tests/services/courseRegistrationService.test.js`
 - `server/docs/openapi.yaml`
-
-### Untracked Working-Tree Content
-
-- `human_refactored_code/client/` is currently untracked and is not included in
-	the server refinement file list above.
