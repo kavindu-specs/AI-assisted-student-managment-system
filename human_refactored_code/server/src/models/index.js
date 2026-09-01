@@ -1,3 +1,15 @@
+// //Use the EER structure as the source of truth. The important pattern is:
+
+// UserAccount ⇄ Role (many-to-many)
+// UserAccount → Student (ISA)
+// Student → StudentAccount (1:1)
+// Student → StudentProfile (1:1)
+// Student → CourseRegistration (1:N)
+// CourseRegistration → CourseRegistrationItem (1:N)
+// Semester → AcademicYear (N:1)
+// Programme → Faculty (N:1)
+// Programme → Intake (1:N)
+
 const sequelize = require('../config/db');
 
 const Role = require('./Role');
@@ -25,7 +37,6 @@ const AuditLog = require('./AuditLog');
 const Notification = require('./Notification');
 const OtpChallenge = require('./OtpChallenge');
 
-// Academic structure: Faculty -> Programme -> Intake, plus regulation/year/semester
 Faculty.hasMany(Programme, { foreignKey: 'faculty_id' });
 Programme.belongsTo(Faculty, { foreignKey: 'faculty_id' });
 
@@ -35,21 +46,18 @@ Intake.belongsTo(Programme, { foreignKey: 'programme_id' });
 AcademicYear.hasMany(Semester, { foreignKey: 'academic_year_id' });
 Semester.belongsTo(AcademicYear, { foreignKey: 'academic_year_id' });
 
-// Identity: USER_ACCOUNT is the base table; ADMIN_USER/STUDENT are ISA
-// subtypes sharing its primary key (admin_id/student_id === user_id).
 UserAccount.belongsToMany(Role, { through: UserRole, foreignKey: 'user_id', otherKey: 'role_id' });
 Role.belongsToMany(UserAccount, { through: UserRole, foreignKey: 'role_id', otherKey: 'user_id' });
 
 UserAccount.hasOne(AdminUser, { foreignKey: 'admin_id' });
 AdminUser.belongsTo(UserAccount, { foreignKey: 'admin_id' });
 
-UserAccount.hasOne(OtpChallenge, { foreignKey: 'user_id' });
-OtpChallenge.belongsTo(UserAccount, { foreignKey: 'user_id' });
-
 UserAccount.hasOne(Student, { foreignKey: 'student_id' });
 Student.belongsTo(UserAccount, { foreignKey: 'student_id' });
 
-// Student <-> academic structure (restored: see plan notes)
+UserAccount.hasOne(OtpChallenge, { foreignKey: 'user_id' });
+OtpChallenge.belongsTo(UserAccount, { foreignKey: 'user_id' });
+
 Programme.hasMany(Student, { foreignKey: 'programme_id' });
 Student.belongsTo(Programme, { foreignKey: 'programme_id' });
 
@@ -65,7 +73,6 @@ StudentAccount.belongsTo(Student, { foreignKey: 'student_id' });
 Student.hasOne(StudentProfile, { foreignKey: 'student_id' });
 StudentProfile.belongsTo(Student, { foreignKey: 'student_id' });
 
-// Weak entities depending on Student
 Student.hasMany(ProfilePhotograph, { foreignKey: 'student_id' });
 ProfilePhotograph.belongsTo(Student, { foreignKey: 'student_id' });
 
@@ -74,10 +81,7 @@ Signature.belongsTo(Student, { foreignKey: 'student_id' });
 
 Student.hasMany(SupportingDocument, { foreignKey: 'student_id' });
 SupportingDocument.belongsTo(Student, { foreignKey: 'student_id' });
-AdminUser.hasMany(SupportingDocument, { foreignKey: 'verified_by' });
-SupportingDocument.belongsTo(AdminUser, { foreignKey: 'verified_by', as: 'verifiedBy' });
 
-// Course registration
 Student.hasMany(CourseRegistration, { foreignKey: 'student_id' });
 CourseRegistration.belongsTo(Student, { foreignKey: 'student_id' });
 
@@ -90,16 +94,15 @@ CourseRegistrationItem.belongsTo(CourseRegistration, { foreignKey: 'registration
 Course.hasMany(CourseRegistrationItem, { foreignKey: 'course_id' });
 CourseRegistrationItem.belongsTo(Course, { foreignKey: 'course_id' });
 
-// Bulk import + correction workflow
 AdminUser.hasMany(ImportBatch, { foreignKey: 'imported_by' });
 ImportBatch.belongsTo(AdminUser, { foreignKey: 'imported_by', as: 'importedBy' });
 
 ImportBatch.hasMany(CorrectionRequest, { foreignKey: 'batch_id' });
 CorrectionRequest.belongsTo(ImportBatch, { foreignKey: 'batch_id' });
+
 AdminUser.hasMany(CorrectionRequest, { foreignKey: 'requested_by' });
 CorrectionRequest.belongsTo(AdminUser, { foreignKey: 'requested_by', as: 'requestedBy' });
 
-// Audit & notifications
 UserAccount.hasMany(AuditLog, { foreignKey: 'actor_id' });
 AuditLog.belongsTo(UserAccount, { foreignKey: 'actor_id', as: 'actor' });
 

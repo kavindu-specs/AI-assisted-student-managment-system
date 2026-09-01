@@ -22,7 +22,7 @@ jest.mock('../../src/utils/password', () => ({ generateTempPassword: jest.fn(), 
 const fs = require('fs');
 const XLSX = require('xlsx');
 const {
-  ImportBatch, Student, StudentAccount, StudentProfile, UserAccount, Role, Programme, Intake,
+  ImportBatch, Student, StudentAccount, StudentProfile, UserAccount, Role, Programme, Intake, sequelize,
 } = require('../../src/models');
 const { generateRegistrationNo } = require('../../src/utils/registrationNumber');
 const { generateTempPassword, hash } = require('../../src/utils/password');
@@ -239,5 +239,23 @@ describe('importStudents - per-row validation', () => {
     XLSX.utils.sheet_to_json.mockReturnValue([validRow()]);
     await bulkImportService.importStudents(BASE_PARAMS);
     expect(fs.unlink).toHaveBeenCalledWith(BASE_PARAMS.filePath, expect.any(Function));
+  });
+
+  it('processes larger uploads in chunks while keeping the final batch totals accurate', async () => {
+    const manyRows = Array.from({ length: 125 }, (_, index) => validRow({
+      NIC: `200012345${String(index + 100).padStart(3, '0')}`,
+      'Full Name': `Student ${index + 1}`,
+      Email: `student${index + 1}@example.com`,
+    }));
+    XLSX.utils.sheet_to_json.mockReturnValue(manyRows);
+
+    const { rows, batch } = await bulkImportService.importStudents(BASE_PARAMS);
+
+    expect(rows).toHaveLength(125);
+    expect(batch.update).toHaveBeenCalledWith(
+      { valid_records: 125, invalid_records: 0, status: 'Completed' },
+      expect.anything(),
+    );
+    expect(sequelize.transaction).toHaveBeenCalledTimes(2);
   });
 });

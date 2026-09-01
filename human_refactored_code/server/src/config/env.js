@@ -10,6 +10,7 @@ function required(name, fallback) {
 module.exports = {
   port: Number(process.env.PORT) || 4000,
   nodeEnv: process.env.NODE_ENV || 'development',
+  logLevel: process.env.LOG_LEVEL || 'info',
   clientOrigins: [process.env.CLIENT_ADMIN_ORIGIN, process.env.CLIENT_STUDENT_ORIGIN].filter(Boolean),
 
   // Multi-process serving (see server.js). Disable for local debugging with

@@ -88,7 +88,7 @@ paths:
     post:
       tags: [Auth]
       summary: Complete first login (forced password reset)
-      description: Requires the `preAuthToken` from `POST /auth/student/login` (`step: "first-login"`), sent as a Bearer token.
+      description: 'Requires the `preAuthToken` from `POST /auth/student/login` (`step: "first-login"`), sent as a Bearer token.'
       security:
         - bearerAuth: []
       requestBody:
@@ -152,7 +152,7 @@ paths:
     post:
       tags: [Auth]
       summary: Verify the admin OTP (step 2 of 2)
-      description: Requires the `preAuthToken` from `POST /auth/admin/login` (`step: "otp"`), sent as a Bearer token.
+      description: 'Requires the `preAuthToken` from `POST /auth/admin/login` (`step: "otp"`), sent as a Bearer token.'
       security:
         - bearerAuth: []
       requestBody:
@@ -412,15 +412,17 @@ paths:
       tags: [Student]
       summary: List available courses
       description: >
-        Requires `current_status = 'Registered'` (403 otherwise). The schema
-        has no programme-course catalog, so this lists **every** Course row —
-        there is nothing left to scope by programme or year.
+        Requires `current_status = 'Registered'` (403 otherwise) and a valid
+        positive integer `semesterId`. The schema has no programme-course
+        catalog, so this lists **every** Course row — there is nothing left to
+        scope by programme or year.
       parameters:
         - name: semesterId
           in: query
           required: true
           schema:
             type: integer
+            minimum: 1
       responses:
         "200":
           description: All courses
@@ -449,10 +451,12 @@ paths:
       tags: [Student]
       summary: Submit course registration
       description: >
-        Validates no duplicate course IDs, all IDs exist, and total credits
-        are between `MIN_REGISTRATION_CREDITS` (15) and
-        `MAX_REGISTRATION_CREDITS` (22). Re-submitting replaces the previous
-        course list for that semester (409 if already Approved).
+        Requires a registered student and a valid positive integer semester ID.
+        Course IDs must be positive integers with no duplicates, all selected
+        courses must exist, and total credits must be between
+        `MIN_REGISTRATION_CREDITS` (15) and `MAX_REGISTRATION_CREDITS` (22).
+        Re-submitting replaces the previous course list for that semester
+        (409 if already Approved).
       requestBody:
         required: true
         content:
@@ -554,8 +558,7 @@ paths:
           in: path
           required: true
           schema:
-            type: string
-            enum: [approve, reject]
+            $ref: "#/components/schemas/CourseRegistrationDecision"
       requestBody:
         required: true
         content:
@@ -827,14 +830,15 @@ paths:
     post:
       tags: [Admin]
       summary: Approve or reject one or more course registrations
-      description: Only registrations currently `Submitted` can be decided (409 otherwise).
+      description: >
+        The decision must be `approve` or `reject`. Only registrations
+        currently `Submitted` can be decided (409 otherwise).
       parameters:
         - name: decision
           in: path
           required: true
           schema:
-            type: string
-            enum: [approve, reject]
+            $ref: "#/components/schemas/CourseRegistrationDecision"
       requestBody:
         required: true
         content:
@@ -1335,11 +1339,16 @@ components:
       properties:
         semesterId:
           type: integer
+          minimum: 1
+          description: Positive semester identifier.
         courseIds:
           type: array
           minItems: 1
+          uniqueItems: true
+          description: Positive course identifiers; duplicate courses are rejected.
           items:
             type: integer
+            minimum: 1
 
     CourseRegistrationStatus:
       type: string
@@ -1382,6 +1391,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CourseRegistrationItem"
+
+    CourseRegistrationDecision:
+      type: string
+      enum: [approve, reject]
+      description: The only decisions accepted by the registration service.
 
     ApprovalDecisionRequest:
       type: object
@@ -1541,8 +1555,11 @@ components:
         registrationIds:
           type: array
           minItems: 1
+          uniqueItems: true
+          description: Positive registration identifiers; duplicate IDs are rejected.
           items:
             type: integer
+            minimum: 1
 
     ReportsSummary:
       type: object

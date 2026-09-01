@@ -11,9 +11,11 @@ function authenticate(req, res, next) {
 
   try {
     const payload = verifyToken(token);
+
     if (payload.preAuth) {
       return next(new AppError('Pre-auth token cannot access this resource', 401));
     }
+
     req.user = payload;
     return next();
   } catch (err) {

@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const env = require('./config/env');
+const logger = require('./utils/logger');
 const routes = require('./routes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
@@ -13,7 +14,9 @@ app.use(cors({
   origin: env.clientOrigins.length > 0 ? env.clientOrigins : true,
   credentials: true,
 }));
-app.use(morgan(env.nodeEnv === 'development' ? 'dev' : 'combined'));
+app.use(morgan(env.nodeEnv === 'development' ? 'dev' : 'combined', {
+  stream: { write: (message) => logger.info(message.trim()) },
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

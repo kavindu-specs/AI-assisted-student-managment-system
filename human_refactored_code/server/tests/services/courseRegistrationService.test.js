@@ -57,6 +57,14 @@ describe('submitRegistration', () => {
     Semester.findByPk.mockResolvedValue(SEMESTER);
   });
 
+  it('422s when a course ID is not a positive integer', async () => {
+    await expect(courseRegistrationService.submitRegistration(1, 3, ['1'])).rejects.toMatchObject({
+      statusCode: 422,
+      message: expect.stringMatching(/positive integers/i),
+    });
+    expect(Student.findByPk).not.toHaveBeenCalled();
+  });
+
   it('422s on an empty courseIds array', async () => {
     await expect(courseRegistrationService.submitRegistration(1, 3, [])).rejects.toMatchObject({ statusCode: 422 });
   });
@@ -137,6 +145,13 @@ describe('submitRegistration', () => {
 });
 
 describe('decideRegistration', () => {
+  it('422s for an unsupported decision before querying the registration', async () => {
+    await expect(courseRegistrationService.decideRegistration(1, 'pending', 42)).rejects.toMatchObject({
+      statusCode: 422,
+    });
+    expect(CourseRegistration.findByPk).not.toHaveBeenCalled();
+  });
+
   it('404s when the registration does not exist', async () => {
     CourseRegistration.findByPk.mockResolvedValue(null);
     await expect(courseRegistrationService.decideRegistration(1, 'approve', 42)).rejects.toMatchObject({ statusCode: 404 });

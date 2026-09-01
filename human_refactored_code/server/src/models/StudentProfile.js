@@ -1,3 +1,4 @@
+// server/src/models/StudentProfile.js
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
@@ -13,6 +14,8 @@ const StudentProfile = sequelize.define('StudentProfile', {
   emergency_contact: { type: DataTypes.STRING(150), allowNull: true },
   other_details: { type: DataTypes.TEXT, allowNull: true },
   profile_completion_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
+  created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }, //add created at column
+  updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }, //add updated at column
 }, {
   tableName: 'student_profile',
   timestamps: false,

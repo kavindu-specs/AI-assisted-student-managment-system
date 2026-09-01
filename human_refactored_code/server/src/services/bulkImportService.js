@@ -11,7 +11,9 @@ const {
   VALIDATION_STATUS, IMPORT_BATCH_STATUS, USER_ACCOUNT_STATUS, ROLES,
 } = require('../config/constants');
 
+//initiated chunked size
 const NIC_REGEX = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
+const BULK_IMPORT_CHUNK_SIZE = 100;
 
 function readRows(filePath) {
   const workbook = XLSX.readFile(filePath);
@@ -81,102 +83,107 @@ async function importStudents({
   let failed = 0;
   const resultRows = [];
 
-  const batch = await sequelize.transaction(async (t) => {
-    const createdBatch = await ImportBatch.create({
-      file_name: originalFileName,
-      imported_by: importedByAdminId,
-      total_records: rows.length,
-    }, { transaction: t });
+  // Process large student imports in fixed-size transactional chunks to reduce memory usage while preserving
+  // row-level validation and accurate batch totals.
+  const createdBatch = await ImportBatch.create({
+    file_name: originalFileName,
+    imported_by: importedByAdminId,
+    total_records: rows.length,
+  });
 
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i];
-      const fullName = String(row['Full Name'] || '').trim();
-      const nic = String(row.NIC || '').trim();
-      const dob = excelDateToIso(row.DOB);
-      const gender = normalizeGender(row.Gender);
-      const email = String(row.Email || '').trim();
-      const phone = String(row.Phone || '').trim();
-      const address = String(row.Address || '').trim();
+  for (let chunkStart = 0; chunkStart < rows.length; chunkStart += BULK_IMPORT_CHUNK_SIZE) {
+    const chunk = rows.slice(chunkStart, chunkStart + BULK_IMPORT_CHUNK_SIZE);
 
-      const isDuplicate = Boolean(nic) && (existingNicSet.has(nic) || seenInFile.has(nic));
-      if (nic) seenInFile.add(nic);
+    await sequelize.transaction(async (t) => {
+      for (let offset = 0; offset < chunk.length; offset += 1) {
+        const globalIndex = chunkStart + offset;
+        const row = chunk[offset];
+        const fullName = String(row['Full Name'] || '').trim();
+        const nic = String(row.NIC || '').trim();
+        const dob = excelDateToIso(row.DOB);
+        const gender = normalizeGender(row.Gender);
+        const email = String(row.Email || '').trim();
+        const phone = String(row.Phone || '').trim();
+        const address = String(row.Address || '').trim();
 
-      const hardError = validateRow({
-        fullName, nic, dob, gender,
-      }, isDuplicate);
-      let status = hardError ? hardError.status : VALIDATION_STATUS.VALID;
-      let message = hardError ? hardError.message : null;
-      let studentId = null;
-      let regNumber = null;
+        const isDuplicate = Boolean(nic) && (existingNicSet.has(nic) || seenInFile.has(nic));
+        if (nic) seenInFile.add(nic);
 
-      if (!hardError && !(email || phone || address)) {
-        status = VALIDATION_STATUS.WARNING;
-        message = 'No contact details (email/phone/address) supplied - profile will start incomplete';
-      }
+        const hardError = validateRow({
+          fullName, nic, dob, gender,
+        }, isDuplicate);
+        let status = hardError ? hardError.status : VALIDATION_STATUS.VALID;
+        let message = hardError ? hardError.message : null;
+        let studentId = null;
+        let regNumber = null;
 
-      if (status !== VALIDATION_STATUS.ERROR) {
-        regNumber = await generateRegistrationNo(programme.programme_code, intake.intake_year);
-        const username = regNumber.replace(/-/g, '');
+        if (!hardError && !(email || phone || address)) {
+          status = VALIDATION_STATUS.WARNING;
+          message = 'No contact details (email/phone/address) supplied - profile will start incomplete';
+        }
 
-        const account = await UserAccount.create({
-          username,
-          email: `${username.toLowerCase()}@students.rjt.ac.lk`,
-          password_hash: await hash(generateTempPassword()),
-          status: USER_ACCOUNT_STATUS.INACTIVE,
-        }, { transaction: t });
+        if (status !== VALIDATION_STATUS.ERROR) {
+          regNumber = await generateRegistrationNo(programme.programme_code, intake.intake_year);
+          const username = regNumber.replace(/-/g, '');
 
-        const student = await Student.create({
-          student_id: account.user_id,
+          const account = await UserAccount.create({
+            username,
+            email: `${username.toLowerCase()}@students.rjt.ac.lk`,
+            password_hash: await hash(generateTempPassword()),
+            status: USER_ACCOUNT_STATUS.INACTIVE,
+          }, { transaction: t });
+
+          const student = await Student.create({
+            student_id: account.user_id,
+            reg_number: regNumber,
+            full_name: fullName,
+            nic,
+            programme_id: programmeId,
+            intake_id: intakeId,
+            regulation_id: regulationId,
+          }, { transaction: t });
+
+          await StudentAccount.create({ student_id: student.student_id }, { transaction: t });
+
+          const profile = { email: email || null, contact_no: phone || null, address: address || null };
+          await StudentProfile.create({
+            student_id: student.student_id,
+            ...profile,
+            date_of_birth: dob,
+            gender,
+            profile_completion_pct: calculateCompletionPct(profile),
+          }, { transaction: t });
+
+          if (studentRole) await account.addRole(studentRole, { transaction: t });
+
+          studentId = student.student_id;
+          successful += 1;
+        } else {
+          failed += 1;
+        }
+
+        resultRows.push({
+          row_number: globalIndex + 1,
           reg_number: regNumber,
-          full_name: fullName,
-          nic,
-          programme_id: programmeId,
-          intake_id: intakeId,
-          regulation_id: regulationId,
-        }, { transaction: t });
-
-        await StudentAccount.create({ student_id: student.student_id }, { transaction: t });
-
-        const profile = { email: email || null, contact_no: phone || null, address: address || null };
-        await StudentProfile.create({
-          student_id: student.student_id,
-          ...profile,
-          date_of_birth: dob,
-          gender,
-          profile_completion_pct: calculateCompletionPct(profile),
-        }, { transaction: t });
-
-        if (studentRole) await account.addRole(studentRole, { transaction: t });
-
-        studentId = student.student_id;
-        successful += 1;
-      } else {
-        failed += 1;
+          nic: nic || null,
+          full_name: fullName || null,
+          validation_status: status,
+          message,
+          student_id: studentId,
+        });
       }
+    });
+  }
 
-      resultRows.push({
-        row_number: i + 1,
-        reg_number: regNumber,
-        nic: nic || null,
-        full_name: fullName || null,
-        validation_status: status,
-        message,
-        student_id: studentId,
-      });
-    }
-
-    await createdBatch.update({
-      valid_records: successful,
-      invalid_records: failed,
-      status: IMPORT_BATCH_STATUS.COMPLETED,
-    }, { transaction: t });
-
-    return createdBatch;
+  await createdBatch.update({
+    valid_records: successful,
+    invalid_records: failed,
+    status: IMPORT_BATCH_STATUS.COMPLETED,
   });
 
   fs.unlink(filePath, () => {});
 
-  return { batch, rows: resultRows };
+  return { batch: createdBatch, rows: resultRows };
 }
 
 module.exports = { importStudents };

@@ -1,8 +1,6 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
-// student_id is both this table's PK and a FK -> user_account.user_id
-// (class-table-inheritance / ISA subtype of USER_ACCOUNT).
 const Student = sequelize.define('Student', {
   student_id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: false },
   reg_number: { type: DataTypes.STRING(50), allowNull: false, unique: true },
@@ -21,6 +19,8 @@ const Student = sequelize.define('Student', {
     allowNull: false,
     defaultValue: 'Prospective',
   },
+  created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }, //add created at column
+  updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },//add updated at column
 }, {
   tableName: 'student',
   timestamps: false,

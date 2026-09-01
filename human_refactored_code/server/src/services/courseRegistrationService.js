@@ -7,7 +7,15 @@ const {
   MIN_REGISTRATION_CREDITS, MAX_REGISTRATION_CREDITS, COURSE_REGISTRATION_STATUS, STUDENT_CURRENT_STATUS,
 } = require('../config/constants');
 
+//add soe validation to check if the student is eligible to register for courses in the given semester
 async function assertEligible(studentId, semesterId) {
+  if (!Number.isInteger(studentId) || studentId <= 0) {
+    throw new AppError('A valid student ID is required', 422);
+  }
+  if (!Number.isInteger(semesterId) || semesterId <= 0) {
+    throw new AppError('A valid semester ID is required', 422);
+  }
+
   const student = await Student.findByPk(studentId);
   if (!student) throw new AppError('Student not found', 404);
   if (student.current_status !== STUDENT_CURRENT_STATUS.REGISTERED) {
@@ -30,6 +38,9 @@ async function getAvailableCourses(studentId, semesterId) {
 async function submitRegistration(studentId, semesterId, courseIds) {
   if (!Array.isArray(courseIds) || courseIds.length === 0) {
     throw new AppError('At least one course must be selected', 422);
+  }
+  if (courseIds.some((courseId) => !Number.isInteger(courseId) || courseId <= 0)) {
+    throw new AppError('Course IDs must be positive integers', 422);
   }
   const uniqueIds = new Set(courseIds);
   if (uniqueIds.size !== courseIds.length) {
@@ -93,6 +104,13 @@ async function getRegistrationWithItems(registrationId) {
 }
 
 async function decideRegistration(registrationId, decision, adminUserId) {
+  if (!Number.isInteger(registrationId) || registrationId <= 0) {
+    throw new AppError('A valid registration ID is required', 422);
+  }
+  if (decision !== 'approve' && decision !== 'reject') {
+    throw new AppError('Decision must be approve or reject', 422);
+  }
+
   const registration = await CourseRegistration.findByPk(registrationId);
   if (!registration) throw new AppError('Course registration not found', 404);
   if (registration.status !== COURSE_REGISTRATION_STATUS.SUBMITTED) {

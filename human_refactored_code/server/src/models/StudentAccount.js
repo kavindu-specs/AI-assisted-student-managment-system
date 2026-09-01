@@ -6,11 +6,10 @@ const StudentAccount = sequelize.define('StudentAccount', {
   student_id: { type: DataTypes.INTEGER, allowNull: false, unique: true },
   login_completed: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   created_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  updated_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },//add updated at column
 }, {
   tableName: 'student_account',
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: false,
+  timestamps: false,// Disable automatic timestamps since we have custom created_at and updated_at fields
 });
 
 module.exports = StudentAccount;

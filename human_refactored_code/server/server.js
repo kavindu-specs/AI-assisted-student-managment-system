@@ -19,10 +19,25 @@ async function startWorker() {
     const server = app.listen(env.port, () => {
       logger.info(`[worker ${process.pid}] Server listening on port ${env.port} (${env.nodeEnv})`);
     });
+    server.on('error', (err) => {
+      logger.error(`[worker ${process.pid}] HTTP server error:`, err);
+      process.exit(1);
+    });
 
+    let shuttingDown = false;
     const shutdown = (signal) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       logger.info(`[worker ${process.pid}] Received ${signal}, closing gracefully...`);
-      server.close(() => process.exit(0));
+      server.close(async () => {
+        try {
+          await sequelize.close();
+          process.exit(0);
+        } catch (err) {
+          logger.error(`[worker ${process.pid}] Failed to close database connection:`, err);
+          process.exit(1);
+        }
+      });
       // Force-exit if in-flight requests never drain.
       setTimeout(() => process.exit(1), 10_000).unref();
     };
@@ -33,6 +48,15 @@ async function startWorker() {
     process.exit(1);
   }
 }
+
+process.on('uncaughtException', (err) => {
+  logger.error(`[process ${process.pid}] Uncaught exception:`, err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error(`[process ${process.pid}] Unhandled promise rejection:`, reason);
+  process.exit(1);
+});
 
 /**
  * Forks one worker per configured slot and keeps that count topped up -
@@ -60,6 +84,7 @@ function startPrimary() {
     shuttingDown = true;
     logger.info(`[primary ${process.pid}] Received ${signal}, stopping all workers...`);
     Object.values(cluster.workers).forEach((worker) => worker.process.kill(signal));
+    setTimeout(() => process.exit(0), 10_000).unref();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
